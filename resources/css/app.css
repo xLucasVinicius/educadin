@@ -1,0 +1,119 @@
+@import 'tailwindcss';
+@import '../../vendor/livewire/flux/dist/flux.css';
+
+@source '../views';
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../vendor/livewire/flux-pro/stubs/**/*.blade.php';
+@source '../../vendor/livewire/flux/stubs/**/*.blade.php';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+
+    /* ---------------------------------------------------------------
+       CINZAS DO EDUCADIN
+       Ancorados nas cores originais do projeto:
+         zinc-900 = #1f1f1f  (antigo --cor-fundo-content)
+         zinc-700 = #3d3d3d  (antigo --cor-fundo)
+       O Flux usa essa escala em todos os componentes, então o app
+       inteiro passa a usar estes tons.
+       --------------------------------------------------------------- */
+    --color-zinc-50: #fafafa;
+    --color-zinc-100: #f4f4f4;
+    --color-zinc-200: #e4e4e4;
+    --color-zinc-300: #d0d0d0;
+    --color-zinc-400: #a1a1a1;
+    --color-zinc-500: #787878;
+    --color-zinc-600: #565656;
+    --color-zinc-700: #3d3d3d;
+    --color-zinc-800: #2a2a2a;
+    --color-zinc-900: #1f1f1f;
+    --color-zinc-950: #141414;
+
+    /* ---------------------------------------------------------------
+       DOURADO DO EDUCADIN  (gold-500 = #f2a900, a cor original)
+       Uso: bg-gold-500, text-gold-400, border-gold-600...
+       --------------------------------------------------------------- */
+    --color-gold-50: #fff9e5;
+    --color-gold-100: #fff0bf;
+    --color-gold-200: #ffe38a;
+    --color-gold-300: #ffd14d;
+    --color-gold-400: #fabd1f;
+    --color-gold-500: #f2a900;
+    --color-gold-600: #cc8a00;
+    --color-gold-700: #a16a00;
+    --color-gold-800: #7a5000;
+    --color-gold-900: #5c3d00;
+    --color-gold-950: #3a2600;
+
+    /* Cor de destaque do Flux (botões primários, links, item ativo do menu).
+       accent-foreground = cor do TEXTO que fica em cima do dourado. */
+    --color-accent: var(--color-gold-500);
+    --color-accent-content: var(--color-gold-700);
+    --color-accent-foreground: var(--color-zinc-900);
+}
+
+@layer theme {
+    .dark {
+        --color-accent: var(--color-gold-500);
+        --color-accent-content: var(--color-gold-400);
+        --color-accent-foreground: var(--color-zinc-900);
+    }
+}
+
+@layer base {
+
+    *,
+    ::after,
+    ::before,
+    ::backdrop,
+    ::file-selector-button {
+        border-color: var(--color-gray-200, currentColor);
+    }
+}
+
+/* ---------------------------------------------------------------
+   App só escuro: o navegador passa a desenhar rolagem, listas e
+   campos nativos em tema escuro.
+   --------------------------------------------------------------- */
+@layer base {
+    .dark {
+        color-scheme: dark;
+    }
+}
+
+/* ---------------------------------------------------------------
+   PREENCHIMENTO AUTOMÁTICO (Chrome, Brave, Edge)
+   O navegador pinta os campos preenchidos de azul-claro com texto
+   escuro. A transição "infinita" impede que essa cor apareça, e o
+   campo mantém o fundo escuro normal. A cor do texto é forçada.
+   --------------------------------------------------------------- */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+    -webkit-text-fill-color: #ffffff;
+    caret-color: #ffffff;
+    transition: background-color 600000s 0s, color 600000s 0s;
+}
+
+[data-flux-field]:not(ui-radio, ui-checkbox) {
+    @apply grid gap-2;
+}
+
+[data-flux-label] {
+    @apply  !mb-0 !leading-tight;
+}
+
+input:focus[data-flux-control],
+textarea:focus[data-flux-control],
+select:focus[data-flux-control] {
+    @apply outline-hidden ring-2 ring-accent ring-offset-2 ring-offset-white dark:ring-offset-zinc-900;
+}
+
+/* \[:where(&)\]:size-4 {
+    @apply size-4;
+} */

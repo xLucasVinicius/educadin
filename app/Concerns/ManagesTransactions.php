@@ -1,0 +1,250 @@
+<?php
+
+namespace App\Concerns;
+
+use App\Enums\TransactionCategory;
+use App\Enums\TransactionType;
+use App\Models\Transaction;
+use Carbon\CarbonImmutable;
+use Flux\Flux;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
+use Livewire\Attributes\Computed;
+
+/**
+ * Lógica compartilhada pelas telas de Contas e Cartões para mostrar e
+ * gerenciar os lançamentos do item (conta ou cartão) que está na tela.
+ */
+trait ManagesTransactions
+{
+    use ParsesMoney;
+
+    /** Mês exibido no formato "2026-11". Vazio = mês atual. */
+    public string $month = '';
+
+    public ?int $editingTransactionId = null;
+
+    public ?int $deletingTransactionId = null;
+
+    public string $kind = 'expense';
+
+    public string $description = '';
+
+    public string $amount = '0,00';
+
+    public string $date = '';
+
+    public string $category = '';
+
+    /** Conta ou cartão atualmente em destaque (o "dono" dos lançamentos). */
+    abstract protected function transactionOwner(): ?Model;
+
+    /** Se a tela aceita receitas (cartões só aceitam despesas). */
+    abstract protected function allowsIncome(): bool;
+
+    /** Limpa os caches de computed da própria tela após mudar lançamentos. */
+    abstract protected function forgetOwnerCaches(): void;
+
+    protected function monthStart(): CarbonImmutable
+    {
+        if (preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $this->month)) {
+            return CarbonImmutable::parse($this->month.'-01')->startOfDay();
+        }
+
+        return now()->startOfMonth();
+    }
+
+    #[Computed]
+    public function monthLabel(): string
+    {
+        return Str::ucfirst(
+            $this->monthStart()->locale(app()->getLocale())->translatedFormat('F \d\e Y')
+        );
+    }
+
+    /**
+     * @return Collection<int, Transaction>
+     */
+    #[Computed]
+    public function transactions(): Collection
+    {
+        $owner = $this->transactionOwner();
+
+        if (! $owner) {
+            return new Collection;
+        }
+
+        $start = $this->monthStart();
+
+        return $owner->transactions()
+            ->whereBetween('date', [$start->toDateString(), $start->endOfMonth()->toDateString()])
+            ->orderByDesc('date')
+            ->orderByDesc('id')
+            ->get();
+    }
+
+    /**
+     * @return array{income: int, expense: int}
+     */
+    #[Computed]
+    public function monthTotals(): array
+    {
+        return [
+            'income' => (int) $this->transactions->filter->isIncome()->sum('amount'),
+            'expense' => (int) $this->transactions->reject->isIncome()->sum('amount'),
+        ];
+    }
+
+    /**
+     * @return array<int, TransactionCategory>
+     */
+    #[Computed]
+    public function categoryOptions(): array
+    {
+        return TransactionCategory::forType(TransactionType::tryFrom($this->kind) ?? TransactionType::Expense);
+    }
+
+    public function updatedKind(): void
+    {
+        $this->category = '';
+    }
+
+    public function previousMonth(): void
+    {
+        $this->month = $this->monthStart()->subMonthNoOverflow()->format('Y-m');
+        $this->forgetTransactionCaches();
+    }
+
+    public function nextMonth(): void
+    {
+        $this->month = $this->monthStart()->addMonthNoOverflow()->format('Y-m');
+        $this->forgetTransactionCaches();
+    }
+
+    public function createTransaction(): void
+    {
+        abort_unless($this->transactionOwner(), 404);
+
+        $this->resetValidation();
+        $this->reset('editingTransactionId', 'description', 'category');
+        $this->kind = 'expense';
+        $this->amount = '0,00';
+        $this->date = now()->toDateString();
+
+        Flux::modal('transaction-form')->show();
+    }
+
+    public function editTransaction(int $id): void
+    {
+        $owner = $this->transactionOwner();
+        abort_unless($owner, 404);
+
+        $transaction = $owner->transactions()->findOrFail($id);
+
+        $this->resetValidation();
+        $this->editingTransactionId = $transaction->id;
+        $this->kind = $transaction->type->value;
+        $this->description = $transaction->description;
+        $this->amount = number_format($transaction->amount / 100, 2, ',', '.');
+        $this->date = $transaction->date->toDateString();
+        $this->category = $transaction->category->value;
+
+        Flux::modal('transaction-form')->show();
+    }
+
+    public function saveTransaction(): void
+    {
+        $owner = $this->transactionOwner();
+        abort_unless($owner, 404);
+
+        if (! $this->allowsIncome()) {
+            $this->kind = 'expense';
+        }
+
+        $this->description = trim($this->description);
+        $this->amount = trim($this->amount);
+        $type = TransactionType::tryFrom($this->kind) ?? TransactionType::Expense;
+
+        $validated = $this->validate([
+            'kind' => ['required', Rule::enum(TransactionType::class)],
+            'description' => ['required', 'string', 'max:150'],
+            'amount' => [
+                'bail',
+                'required',
+                'regex:'.$this->moneyPattern(allowNegative: false),
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($this->parseAmountToCents((string) $value) <= 0) {
+                        $fail(__('The :attribute must be greater than zero.', [
+                            'attribute' => __('validation.attributes.amount'),
+                        ]));
+                    }
+                },
+            ],
+            'date' => ['required', 'date_format:Y-m-d'],
+            'category' => [
+                'required',
+                Rule::in(array_map(fn (TransactionCategory $c) => $c->value, TransactionCategory::forType($type))),
+            ],
+        ], [
+            'amount.regex' => __('The :attribute must be a valid amount, e.g. 1.234,56.'),
+        ]);
+
+        $data = [
+            'user_id' => Auth::id(),
+            'type' => $validated['kind'],
+            'description' => $validated['description'],
+            'amount' => $this->parseAmountToCents($validated['amount']),
+            'date' => $validated['date'],
+            'category' => $validated['category'],
+        ];
+
+        if ($this->editingTransactionId) {
+            $owner->transactions()->findOrFail($this->editingTransactionId)->update(Arr::except($data, 'user_id'));
+            $message = __('Transaction updated.');
+        } else {
+            $owner->transactions()->create($data);
+            $message = __('Transaction created.');
+        }
+
+        // Mostra o mês do lançamento salvo para o usuário vê-lo na lista.
+        $this->month = substr($validated['date'], 0, 7);
+        $this->forgetTransactionCaches();
+
+        Flux::modal('transaction-form')->close();
+        Flux::toast(variant: 'success', text: $message);
+    }
+
+    public function confirmDeleteTransaction(int $id): void
+    {
+        $owner = $this->transactionOwner();
+        abort_unless($owner, 404);
+
+        $this->deletingTransactionId = $owner->transactions()->findOrFail($id)->id;
+
+        Flux::modal('confirm-transaction-deletion')->show();
+    }
+
+    public function deleteTransaction(): void
+    {
+        $owner = $this->transactionOwner();
+        abort_unless($owner, 404);
+
+        $owner->transactions()->findOrFail($this->deletingTransactionId)->delete();
+
+        $this->deletingTransactionId = null;
+        $this->forgetTransactionCaches();
+
+        Flux::modal('confirm-transaction-deletion')->close();
+        Flux::toast(variant: 'success', text: __('Transaction deleted.'));
+    }
+
+    protected function forgetTransactionCaches(): void
+    {
+        unset($this->transactions, $this->monthTotals, $this->monthLabel);
+        $this->forgetOwnerCaches();
+    }
+}
