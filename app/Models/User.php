@@ -20,6 +20,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property int $id
  * @property string $name
  * @property string $email
+ * @property string|null $avatar_path Foto de perfil; nulo = foto padrão (iniciais).
  * @property Carbon|null $email_verified_at
  * @property string $password
  * @property string|null $two_factor_secret
@@ -62,6 +63,18 @@ class User extends Authenticatable implements MustVerifyEmail, PasskeyUser
     public function cards(): HasMany
     {
         return $this->hasMany(Card::class);
+    }
+
+    /**
+     * Endereço da foto de perfil (somente do próprio usuário logado), ou null
+     * quando vale a foto padrão. O número na URL força o navegador a recarregar
+     * quando a foto muda.
+     */
+    public function avatarUrl(): ?string
+    {
+        return $this->avatar_path
+            ? route('profile.photo', ['v' => substr(md5($this->avatar_path), 0, 8)])
+            : null;
     }
 
     /**

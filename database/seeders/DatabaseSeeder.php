@@ -7,6 +7,7 @@ use App\Enums\AccountType;
 use App\Enums\CardType;
 use App\Enums\TransactionCategory as Cat;
 use App\Enums\TransactionType;
+use App\Models\Transfer;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
@@ -32,7 +33,7 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $cards = $user->cards()->createMany([
-            ['account_id' => $accounts[0]->id, 'name' => 'Nubank Crédito', 'type' => CardType::Credit, 'credit_limit' => 450000, 'closing_day' => 5, 'due_day' => 12],
+            ['account_id' => $accounts[0]->id, 'name' => 'Nubank Crédito', 'type' => CardType::Credit, 'credit_limit' => 450000, 'closing_day' => 25, 'due_day' => 5],
             ['account_id' => $accounts[1]->id, 'name' => 'Itaú Débito', 'type' => CardType::Debit],
         ]);
 
@@ -51,6 +52,11 @@ class DatabaseSeeder extends Seeder
         $accounts[1]->transactions()->createMany([
             ['user_id' => $user->id, 'type' => $in, 'description' => 'Freelance', 'amount' => 80000, 'date' => $day(1), 'category' => Cat::OtherIncome],
             ['user_id' => $user->id, 'type' => $out, 'description' => 'Plano de saúde', 'amount' => 45000, 'date' => $day(2), 'category' => Cat::Health],
+        ]);
+
+        Transfer::create([
+            'user_id' => $user->id, 'from_account_id' => $accounts[0]->id, 'to_account_id' => $accounts[2]->id,
+            'description' => 'Reserva do mês', 'amount' => 20000, 'date' => $day(4),
         ]);
 
         $cards[0]->transactions()->createMany([

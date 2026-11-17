@@ -21,6 +21,9 @@ enum TransactionCategory: string
     case Bills = 'bills';
     case OtherExpense = 'other_expense';
 
+    // Gerada pelo pagamento de fatura; não aparece nos formulários.
+    case CardBill = 'card_bill';
+
     public function label(): string
     {
         return match ($this) {
@@ -37,6 +40,7 @@ enum TransactionCategory: string
             self::Shopping => __('Shopping'),
             self::Bills => __('Bills and services'),
             self::OtherExpense => __('Other expenses'),
+            self::CardBill => __('Credit card bill'),
         };
     }
 
@@ -53,6 +57,6 @@ enum TransactionCategory: string
      */
     public static function forType(TransactionType $type): array
     {
-        return array_values(array_filter(self::cases(), fn (self $c) => $c->type() === $type));
+        return array_values(array_filter(self::cases(), fn (self $c) => $c->type() === $type && $c !== self::CardBill));
     }
 }

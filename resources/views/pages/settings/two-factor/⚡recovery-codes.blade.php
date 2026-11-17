@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\PasswordConfirmation;
 use Laravel\Fortify\Actions\GenerateNewRecoveryCodes;
 use Livewire\Attributes\Locked;
 use Livewire\Component;
@@ -13,6 +14,8 @@ new class extends Component {
      */
     public function viewRecoveryCodes(): void
     {
+        abort_unless(PasswordConfirmation::fresh(), 403);
+
         $this->loadRecoveryCodes();
     }
 
@@ -21,6 +24,8 @@ new class extends Component {
      */
     public function regenerateRecoveryCodes(GenerateNewRecoveryCodes $generateNewRecoveryCodes): void
     {
+        abort_unless(PasswordConfirmation::fresh(), 403);
+
         $generateNewRecoveryCodes(auth()->user());
 
         $this->loadRecoveryCodes();

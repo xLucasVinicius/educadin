@@ -6,8 +6,8 @@ use App\Enums\AccountColor;
 use App\Enums\AccountType;
 use Database\Factories\AccountFactory;
 use Illuminate\Database\Eloquent\Attributes\Fillable;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -56,6 +56,16 @@ class Account extends Model
         return $this->hasMany(Transaction::class);
     }
 
+    public function transfersOut(): HasMany
+    {
+        return $this->hasMany(Transfer::class, 'from_account_id');
+    }
+
+    public function transfersIn(): HasMany
+    {
+        return $this->hasMany(Transfer::class, 'to_account_id');
+    }
+
     /**
      * Carrega os totais de receitas e despesas junto com as contas,
      * para calcular o saldo atual sem uma consulta por conta.
@@ -67,22 +77,29 @@ class Account extends Model
     {
         return $query
             ->withSum(['transactions as income_total' => fn ($q) => $q->where('type', 'income')], 'amount')
-            ->withSum(['transactions as expense_total' => fn ($q) => $q->where('type', 'expense')], 'amount');
+            ->withSum(['transactions as expense_total' => fn ($q) => $q->where('type', 'expense')], 'amount')
+            ->withSum('transfersIn as transfers_in_total', 'amount')
+            ->withSum('transfersOut as transfers_out_total', 'amount');
     }
 
     /**
-     * Saldo atual em centavos: saldo inicial + receitas - despesas.
+     * Saldo atual em centavos: saldo inicial + receitas - despesas
+     * + transferências recebidas - transferências enviadas.
      */
     public function currentBalance(): int
     {
         if (array_key_exists('income_total', $this->attributes)) {
             $income = (int) $this->income_total;
             $expense = (int) $this->expense_total;
+            $in = (int) $this->transfers_in_total;
+            $out = (int) $this->transfers_out_total;
         } else {
             $income = (int) $this->transactions()->where('type', 'income')->sum('amount');
             $expense = (int) $this->transactions()->where('type', 'expense')->sum('amount');
+            $in = (int) $this->transfersIn()->sum('amount');
+            $out = (int) $this->transfersOut()->sum('amount');
         }
 
-        return $this->initial_balance + $income - $expense;
+        return $this->initial_balance + $income - $expense + $in - $out;
     }
 }

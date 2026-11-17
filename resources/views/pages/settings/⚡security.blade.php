@@ -1,12 +1,15 @@
 <?php
 
 use App\Concerns\PasswordValidationRules;
+use App\Support\PasswordConfirmation;
 use Flux\Flux;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 use Laravel\Fortify\Actions\DisableTwoFactorAuthentication;
 use Laravel\Fortify\Features;
 use Laravel\Fortify\Fortify;
+use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
 use Livewire\Component;
 use Laravel\Passkeys\Actions\DeletePasskey;
@@ -19,6 +22,13 @@ new #[Title('Security settings')] class extends Component {
     public string $current_password = '';
     public string $password = '';
     public string $password_confirmation = '';
+
+    /** Senha digitada para liberar 2FA e chaves de acesso. */
+    public string $confirm_password = '';
+
+    /** O que o usuário clicou antes de a senha ser pedida; é executado após confirmar. */
+    #[Locked]
+    public string $pendingIntent = '';
 
     public bool $canManageTwoFactor;
 
@@ -61,6 +71,78 @@ new #[Title('Security settings')] class extends Component {
         if ($this->canManagePasskeys) {
             $this->loadPasskeys();
         }
+    }
+
+    /**
+     * 2FA e chaves de acesso só ficam disponíveis depois de confirmar a senha
+     * (vale pelo tempo definido em auth.password_timeout, como no Laravel).
+     */
+    #[Computed]
+    public function unlocked(): bool
+    {
+        return PasswordConfirmation::fresh();
+    }
+
+    /**
+     * Ação sensível: se a senha ainda não foi confirmada, abre o pedido de senha
+     * e guarda o que o usuário quis fazer; se já foi confirmada, executa direto.
+     */
+    public function requestUnlock(string $intent): void
+    {
+        if ($this->unlocked) {
+            $this->runIntent($intent);
+
+            return;
+        }
+
+        $this->reset('confirm_password');
+        $this->resetErrorBag();
+        $this->pendingIntent = $intent;
+
+        Flux::modal('confirm-password-modal')->show();
+    }
+
+    public function unlockSensitive(): void
+    {
+        $this->validate(['confirm_password' => ['required', 'string']]);
+
+        if (! Hash::check($this->confirm_password, Auth::user()->password)) {
+            $this->reset('confirm_password');
+            $this->addError('confirm_password', __('auth.password'));
+
+            return;
+        }
+
+        // Mesma chave que o middleware "password.confirm" usa, para as rotas do Fortify aceitarem.
+        PasswordConfirmation::confirm();
+
+        $this->reset('confirm_password');
+        unset($this->unlocked);
+
+        Flux::modal('confirm-password-modal')->close();
+
+        $intent = $this->pendingIntent;
+        $this->pendingIntent = '';
+
+        $this->runIntent($intent);
+    }
+
+    /**
+     * Continua a ação que o usuário tinha clicado antes de confirmar a senha.
+     */
+    private function runIntent(string $intent): void
+    {
+        if ($intent === 'enable2fa') {
+            $this->dispatch('start-two-factor-setup');
+            Flux::modal('two-factor-setup-modal')->show();
+        } elseif ($intent === 'disable2fa') {
+            $this->disable(app(DisableTwoFactorAuthentication::class));
+        } elseif ($intent === 'passkey') {
+            $this->js("window.dispatchEvent(new CustomEvent('open-passkey-form'))");
+        } elseif (str_starts_with($intent, 'delete:')) {
+            $this->confirmDelete((int) substr($intent, 7));
+        }
+        // "recovery": basta liberar; os códigos aparecem na tela.
     }
 
     /**
@@ -112,6 +194,8 @@ new #[Title('Security settings')] class extends Component {
      */
     public function confirmDelete(int $passkeyId): void
     {
+        abort_unless($this->unlocked, 403);
+
         $passkey = auth()->user()->passkeys()->findOrFail($passkeyId);
 
         $this->deletingPasskeyId = $passkey->id;
@@ -124,6 +208,8 @@ new #[Title('Security settings')] class extends Component {
      */
     public function deletePasskey(DeletePasskey $deletePasskey): void
     {
+        abort_unless($this->unlocked, 403);
+
         if (! $this->deletingPasskeyId) {
             return;
         }
@@ -160,6 +246,8 @@ new #[Title('Security settings')] class extends Component {
      */
     public function disable(DisableTwoFactorAuthentication $disableTwoFactorAuthentication): void
     {
+        abort_unless($this->unlocked, 403);
+
         $disableTwoFactorAuthentication(auth()->user());
 
         $this->twoFactorEnabled = false;
@@ -222,13 +310,23 @@ new #[Title('Security settings')] class extends Component {
                             <div class="flex justify-start">
                                 <flux:button
                                     variant="danger"
-                                    wire:click="disable"
+                                    wire:click="requestUnlock('disable2fa')"
                                 >
                                     {{ __('Disable 2FA') }}
                                 </flux:button>
                             </div>
 
-                            <livewire:pages::settings.two-factor.recovery-codes :$requiresConfirmation />
+                            @if ($this->unlocked)
+                                <livewire:pages::settings.two-factor.recovery-codes :$requiresConfirmation />
+                            @else
+                                <div class="flex items-center justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+                                    <div>
+                                        <flux:heading>{{ __('2FA recovery codes') }}</flux:heading>
+                                        <flux:text class="mt-1 text-sm">{{ __('Confirm your password to see your recovery codes.') }}</flux:text>
+                                    </div>
+                                    <flux:button size="sm" wire:click="requestUnlock('recovery')">{{ __('View recovery codes') }}</flux:button>
+                                </div>
+                            @endif
                         </div>
                     @else
                         <div class="space-y-4">
@@ -236,14 +334,20 @@ new #[Title('Security settings')] class extends Component {
                                 {{ __('When you enable two-factor authentication, you will be prompted for a secure pin during login. This pin can be retrieved from a TOTP-supported application on your phone.') }}
                             </flux:text>
 
-                            <flux:modal.trigger name="two-factor-setup-modal">
-                                <flux:button
-                                    variant="primary"
-                                    wire:click="$dispatch('start-two-factor-setup')"
-                                >
+                            @if ($this->unlocked)
+                                <flux:modal.trigger name="two-factor-setup-modal">
+                                    <flux:button
+                                        variant="primary"
+                                        wire:click="$dispatch('start-two-factor-setup')"
+                                    >
+                                        {{ __('Enable 2FA') }}
+                                    </flux:button>
+                                </flux:modal.trigger>
+                            @else
+                                <flux:button variant="primary" wire:click="requestUnlock('enable2fa')">
                                     {{ __('Enable 2FA') }}
                                 </flux:button>
-                            </flux:modal.trigger>
+                            @endif
 
                             <livewire:pages::settings.two-factor-setup-modal :requires-confirmation="$requiresConfirmation" />
                         </div>
@@ -287,7 +391,7 @@ new #[Title('Security settings')] class extends Component {
                                     size="sm"
                                     icon="trash"
                                     icon:variant="outline"
-                                    wire:click="confirmDelete({{ $passkey['id'] }})"
+                                    wire:click="requestUnlock('delete:{{ $passkey['id'] }}')"
                                     class="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50"
                                 />
                             </div>
@@ -302,11 +406,38 @@ new #[Title('Security settings')] class extends Component {
                         @endforelse
                     </div>
 
-                    <x-passkey-registration />
+                    <x-passkey-registration :locked="! $this->unlocked" />
                 </div>
             </section>
         @endif
     </x-pages::settings.layout>
+
+    <flux:modal name="confirm-password-modal" class="min-w-[22rem] md:w-96">
+        <form wire:submit="unlockSensitive" class="space-y-6">
+            <div>
+                <flux:heading size="lg">{{ __('Confirm your password') }}</flux:heading>
+                <flux:text class="mt-2">{{ __('For your security, enter your password to continue.') }}</flux:text>
+            </div>
+
+            <flux:input
+                wire:model="confirm_password"
+                :label="__('Password')"
+                type="password"
+                required
+                autofocus
+                autocomplete="current-password"
+                viewable
+            />
+
+            <div class="flex gap-2">
+                <flux:spacer />
+                <flux:modal.close>
+                    <flux:button variant="ghost">{{ __('Cancel') }}</flux:button>
+                </flux:modal.close>
+                <flux:button variant="primary" type="submit" data-test="unlock-security-button">{{ __('Confirm') }}</flux:button>
+            </div>
+        </form>
+    </flux:modal>
 
     <flux:modal
         name="delete-passkey-modal"

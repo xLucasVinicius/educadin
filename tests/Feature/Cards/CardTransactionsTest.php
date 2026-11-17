@@ -70,7 +70,7 @@ test('only the active card transactions are listed, never account ones', functio
 
 test('monthly spending of a credit card is shown', function () {
     $user = User::factory()->create();
-    $card = Card::factory()->for($user)->credit()->create(['credit_limit' => 100000]);
+    $card = Card::factory()->for($user)->credit()->create(['credit_limit' => 100000, 'closing_day' => 28, 'due_day' => 10]);
     Transaction::factory()->forCard($card)->create(['amount' => 25000, 'date' => cardMonthDay(1)]);
     $this->actingAs($user);
 

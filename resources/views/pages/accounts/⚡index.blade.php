@@ -4,6 +4,7 @@ use App\Concerns\ManagesTransactions;
 use App\Enums\AccountColor;
 use App\Enums\AccountType;
 use App\Models\Account;
+use App\Models\Transfer;
 use App\Support\Money;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Collection;
@@ -33,6 +34,17 @@ new #[Title('Accounts')] class extends Component {
     public string $color = 'amber';
 
     public string $initialBalance = '0,00';
+
+    // Transferência entre contas (a conta em destaque é sempre a de origem).
+    public string $transferTo = '';
+
+    public string $transferAmount = '0,00';
+
+    public string $transferDate = '';
+
+    public string $transferDescription = '';
+
+    public ?int $deletingTransferId = null;
 
     /**
      * @return Collection<int, Account>
@@ -64,16 +76,144 @@ new #[Title('Accounts')] class extends Component {
         $before = $this->monthStart()->toDateString();
         $income = $account->transactions()->where('type', 'income')->where('date', '<', $before)->sum('amount');
         $expense = $account->transactions()->where('type', 'expense')->where('date', '<', $before)->sum('amount');
+        $in = $account->transfersIn()->where('date', '<', $before)->sum('amount');
+        $out = $account->transfersOut()->where('date', '<', $before)->sum('amount');
 
-        return $account->initial_balance + (int) $income - (int) $expense;
+        return $account->initial_balance + (int) $income - (int) $expense + (int) $in - (int) $out;
     }
 
     #[Computed]
     public function deletingTransactionsCount(): int
     {
         return $this->deletingId
-            ? Auth::user()->accounts()->findOrFail($this->deletingId)->transactions()->count()
+            ? $this->countRecordsOf(Auth::user()->accounts()->findOrFail($this->deletingId))
             : 0;
+    }
+
+    private function countRecordsOf(Account $account): int
+    {
+        return $account->transactions()->count()
+            + $account->transfersIn()->count()
+            + $account->transfersOut()->count();
+    }
+
+    /**
+     * Transferências do mês exibido em que a conta em destaque participa.
+     *
+     * @return Collection<int, Transfer>
+     */
+    #[Computed]
+    public function transfers(): Collection
+    {
+        $account = $this->activeAccount;
+
+        if (! $account) {
+            return new Collection;
+        }
+
+        $start = $this->monthStart();
+
+        return Transfer::query()
+            ->where('user_id', Auth::id())
+            ->where(fn ($q) => $q->where('from_account_id', $account->id)->orWhere('to_account_id', $account->id))
+            ->whereBetween('date', [$start->toDateString(), $start->endOfMonth()->toDateString()])
+            ->with(['fromAccount', 'toAccount'])
+            ->orderByDesc('date')
+            ->orderByDesc('id')
+            ->get();
+    }
+
+    public function createTransfer(): void
+    {
+        abort_unless($this->activeAccount && $this->accounts->count() > 1, 404);
+
+        $this->resetValidation();
+        $this->reset('transferTo', 'transferDescription');
+        $this->transferAmount = '0,00';
+        $this->transferDate = now()->toDateString();
+
+        Flux::modal('transfer-form')->show();
+    }
+
+    public function saveTransfer(): void
+    {
+        $account = $this->activeAccount;
+        abort_unless($account, 404);
+
+        $this->transferAmount = trim($this->transferAmount);
+        $this->transferDescription = trim($this->transferDescription);
+
+        $validated = $this->validate([
+            'transferTo' => [
+                'required',
+                Rule::exists('accounts', 'id')->where('user_id', Auth::id()),
+                Rule::notIn([(string) $account->id]),
+            ],
+            'transferAmount' => [
+                'bail',
+                'required',
+                'regex:'.$this->moneyPattern(allowNegative: false),
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($this->parseAmountToCents((string) $value) <= 0) {
+                        $fail(__('The :attribute must be greater than zero.', [
+                            'attribute' => __('validation.attributes.transferAmount'),
+                        ]));
+                    }
+                },
+            ],
+            'transferDate' => ['required', 'date_format:Y-m-d'],
+            'transferDescription' => ['nullable', 'string', 'max:150'],
+        ], [
+            'transferTo.not_in' => __('The destination account must be different from the origin account.'),
+            'transferAmount.regex' => __('The :attribute must be a valid amount, e.g. 1.234,56.'),
+        ]);
+
+        Transfer::create([
+            'user_id' => Auth::id(),
+            'from_account_id' => $account->id,
+            'to_account_id' => (int) $validated['transferTo'],
+            'description' => $validated['transferDescription'] !== '' ? $validated['transferDescription'] : null,
+            'amount' => $this->parseAmountToCents($validated['transferAmount']),
+            'date' => $validated['transferDate'],
+        ]);
+
+        // Mostra o mês da transferência para o usuário vê-la na lista.
+        $this->month = substr($validated['transferDate'], 0, 7);
+        $this->forgetTransactionCaches();
+
+        Flux::modal('transfer-form')->close();
+        Flux::toast(variant: 'success', text: __('Transfer created.'));
+    }
+
+    private function findOwnTransfer(int $id): Transfer
+    {
+        $account = $this->activeAccount;
+        abort_unless($account, 404);
+
+        return Transfer::query()
+            ->where('user_id', Auth::id())
+            ->where(fn ($q) => $q->where('from_account_id', $account->id)->orWhere('to_account_id', $account->id))
+            ->findOrFail($id);
+    }
+
+    public function confirmDeleteTransfer(int $id): void
+    {
+        $this->deletingTransferId = $this->findOwnTransfer($id)->id;
+
+        Flux::modal('confirm-transfer-deletion')->show();
+    }
+
+    public function deleteTransfer(): void
+    {
+        abort_unless($this->deletingTransferId, 404);
+
+        $this->findOwnTransfer($this->deletingTransferId)->delete();
+
+        $this->deletingTransferId = null;
+        $this->forgetTransactionCaches();
+
+        Flux::modal('confirm-transfer-deletion')->close();
+        Flux::toast(variant: 'success', text: __('Transfer deleted.'));
     }
 
     protected function transactionOwner(): ?Model
@@ -88,7 +228,7 @@ new #[Title('Accounts')] class extends Component {
 
     protected function forgetOwnerCaches(): void
     {
-        unset($this->accounts, $this->activeAccount, $this->openingBalance);
+        unset($this->accounts, $this->activeAccount, $this->openingBalance, $this->transfers);
     }
 
     public function select(int $id): void
@@ -338,7 +478,13 @@ new #[Title('Accounts')] class extends Component {
             />
         </div>
 
-        <x-transactions-panel :transactions="$this->transactions" :month-label="$this->monthLabel" />
+        <x-transactions-panel
+            :transactions="$this->transactions"
+            :month-label="$this->monthLabel"
+            :transfers="$this->transfers"
+            :account-id="$account->id"
+            :can-transfer="$this->accounts->count() > 1"
+        />
     @endif
 
     <x-transaction-modals
@@ -346,6 +492,59 @@ new #[Title('Accounts')] class extends Component {
         :categories="$this->categoryOptions"
         :editing="(bool) $editingTransactionId"
     />
+
+    @if ($this->activeAccount)
+        <flux:modal name="transfer-form" class="md:w-[28rem]">
+            <form wire:submit="saveTransfer" class="space-y-6">
+                <div>
+                    <flux:heading size="lg">{{ __('New transfer') }}</flux:heading>
+                    <flux:text class="mt-1">{{ __('From :account', ['account' => $this->activeAccount->name]) }}</flux:text>
+                </div>
+
+                <flux:select wire:model="transferTo" :label="__('Destination account')" :placeholder="__('Select an account')">
+                    @foreach ($this->accounts->where('id', '!=', $this->activeAccount->id) as $other)
+                        <flux:select.option value="{{ $other->id }}">{{ $other->name }}</flux:select.option>
+                    @endforeach
+                </flux:select>
+
+                <x-money-input model="transferAmount" :label="__('Amount')" />
+
+                <flux:input wire:model="transferDate" :label="__('Date')" type="date" required />
+
+                <flux:input wire:model="transferDescription" :label="__('Description (optional)')" type="text" />
+
+                <div class="flex gap-2">
+                    <flux:spacer />
+                    <flux:modal.close>
+                        <flux:button variant="ghost">{{ __('Cancel') }}</flux:button>
+                    </flux:modal.close>
+                    <flux:button variant="primary" type="submit" data-test="save-transfer-button">{{ __('Transfer') }}</flux:button>
+                </div>
+            </form>
+        </flux:modal>
+    @endif
+
+    <flux:modal name="confirm-transfer-deletion" class="min-w-[22rem]">
+        <div class="space-y-6">
+            <div>
+                <flux:heading size="lg">{{ __('Delete transfer') }}</flux:heading>
+                <flux:text class="mt-2">
+                    {{ __('Are you sure you want to delete this transfer? The balance of both accounts will be adjusted.') }}
+                    {{ __('This action cannot be undone.') }}
+                </flux:text>
+            </div>
+
+            <div class="flex gap-2">
+                <flux:spacer />
+                <flux:modal.close>
+                    <flux:button variant="ghost">{{ __('Cancel') }}</flux:button>
+                </flux:modal.close>
+                <flux:button variant="danger" wire:click="deleteTransfer" data-test="confirm-delete-transfer-button">
+                    {{ __('Delete') }}
+                </flux:button>
+            </div>
+        </div>
+    </flux:modal>
 
     <flux:modal name="account-form" class="md:w-96">
         <form wire:submit="save" class="space-y-6">
@@ -382,6 +581,7 @@ new #[Title('Accounts')] class extends Component {
 
             <x-money-input
                 model="initialBalance"
+                :allow-negative="true"
                 :label="__('Initial balance')"
                 :description="__('Negative values are allowed, e.g. -50,00.')"
             />

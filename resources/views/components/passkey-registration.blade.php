@@ -1,8 +1,11 @@
+@props(['locked' => false])
+
 @assets
 @vite('resources/js/passkeys.js')
 @endassets
 
 <div
+    x-on:open-passkey-form.window="showForm = true"
     x-data="{
         supported: false,
         showForm: false,
@@ -31,7 +34,7 @@
                 { pattern: /Windows/, name: 'Windows' },
             ].find(({ pattern }) => pattern.test(ua))?.name;
 
-            return [browser, os].filter(Boolean).join(' on ') || '';
+            return [browser, os].filter(Boolean).join(' em ') || '';
         },
         init() {
             this.name = this.getDefaultPasskeyName();
@@ -52,7 +55,15 @@
                 await $wire.loadPasskeys();
             } catch (e) {
                 if (e.constructor?.name !== 'UserCancelledError') {
-                    this.error = e.message;
+                    // Mensagens do navegador vêm em inglês: mostramos as nossas.
+                    const messages = {
+                        NotAllowedError: @js(__('The operation was cancelled or timed out. Try again.')),
+                        InvalidStateError: @js(__('This passkey is already registered on this device.')),
+                        SecurityError: @js(__('The browser blocked the passkey on this address. Use https or localhost.')),
+                        NotSupportedError: @js(__('This device does not support passkeys.')),
+                    };
+                    this.error = messages[e.name] ?? @js(__('Could not register the passkey. Please try again.'));
+                    console.error(e);
                 }
             } finally {
                 this.loading = false;
@@ -71,13 +82,15 @@
 
     <template x-if="supported && !showForm">
         <div>
-            <flux:button
-                variant="primary"
-                icon="plus"
-                x-on:click="showForm = true"
-            >
-                {{ __('Add passkey') }}
-            </flux:button>
+            @if ($locked)
+                <flux:button variant="primary" icon="plus" wire:click="requestUnlock('passkey')">
+                    {{ __('Add passkey') }}
+                </flux:button>
+            @else
+                <flux:button variant="primary" icon="plus" x-on:click="showForm = true">
+                    {{ __('Add passkey') }}
+                </flux:button>
+            @endif
         </div>
     </template>
 

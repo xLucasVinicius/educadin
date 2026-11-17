@@ -1,5 +1,6 @@
 <?php
 
+use App\Support\PasswordConfirmation;
 use Laravel\Fortify\Actions\ConfirmTwoFactorAuthentication;
 use Laravel\Fortify\Actions\EnableTwoFactorAuthentication;
 use Livewire\Attributes\Computed;
@@ -41,6 +42,8 @@ new class extends Component {
 
             return;
         }
+
+        abort_unless(PasswordConfirmation::fresh(), 403);
 
         $enableTwoFactorAuthentication = app(EnableTwoFactorAuthentication::class);
         $enableTwoFactorAuthentication(auth()->user());

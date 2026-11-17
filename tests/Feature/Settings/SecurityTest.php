@@ -32,13 +32,89 @@ test('security settings page can be rendered', function () {
     $response->assertSee(__('Enable 2FA'));
 });
 
-test('security settings page requires password confirmation when enabled', function () {
+test('security settings page opens directly with every section visible', function () {
     $user = User::factory()->create();
 
-    $response = $this->actingAs($user)
-        ->get(route('security.edit'));
+    $this->actingAs($user)
+        ->get(route('security.edit'))
+        ->assertOk()
+        ->assertSee(__('Update password'))
+        ->assertSee(__('Enable 2FA'))
+        ->assertSee(__('No passkeys yet'));
+});
 
-    $response->assertRedirect(route('password.confirm'));
+test('the password is only asked after clicking a sensitive action', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+
+    Livewire::test('pages::settings.security')
+        ->call('requestUnlock', 'enable2fa')
+        ->assertSet('pendingIntent', 'enable2fa')
+        ->assertNotDispatched('start-two-factor-setup')
+        ->set('confirm_password', 'wrong-password')
+        ->call('unlockSensitive')
+        ->assertHasErrors(['confirm_password'])
+        ->assertNotDispatched('start-two-factor-setup')
+        ->set('confirm_password', 'password')
+        ->call('unlockSensitive')
+        ->assertHasNoErrors()
+        ->assertSet('pendingIntent', '')
+        ->assertDispatched('start-two-factor-setup');
+
+    expect(session('auth.password_confirmed_at'))->not->toBeNull();
+});
+
+test('once confirmed, sensitive actions run without asking again', function () {
+    $user = User::factory()->create();
+    $this->actingAs($user);
+    session(['auth.password_confirmed_at' => time()]);
+
+    Livewire::test('pages::settings.security')
+        ->call('requestUnlock', 'enable2fa')
+        ->assertSet('pendingIntent', '')
+        ->assertDispatched('start-two-factor-setup');
+});
+
+test('disabling two factor asks for the password and then disables', function () {
+    $user = User::factory()->create();
+    $user->forceFill([
+        'two_factor_secret' => encrypt('test-secret'),
+        'two_factor_recovery_codes' => encrypt(json_encode(['code1'])),
+        'two_factor_confirmed_at' => now(),
+    ])->save();
+    $this->actingAs($user);
+
+    Livewire::test('pages::settings.security')
+        ->call('requestUnlock', 'disable2fa')
+        ->assertSet('twoFactorEnabled', true)
+        ->set('confirm_password', 'password')
+        ->call('unlockSensitive')
+        ->assertSet('twoFactorEnabled', false);
+
+    expect($user->refresh()->two_factor_secret)->toBeNull();
+});
+
+test('sensitive actions are refused until the password is confirmed', function () {
+    $user = User::factory()->create();
+    $user->forceFill([
+        'two_factor_secret' => encrypt('test-secret'),
+        'two_factor_recovery_codes' => encrypt(json_encode(['code1'])),
+        'two_factor_confirmed_at' => now(),
+    ])->save();
+    $this->actingAs($user);
+
+    Livewire::test('pages::settings.security')->call('disable')->assertForbidden();
+    Livewire::test('pages::settings.two-factor.recovery-codes')->call('viewRecoveryCodes')->assertForbidden();
+
+    expect($user->refresh()->two_factor_secret)->not->toBeNull();
+});
+
+test('two factor setup is refused until the password is confirmed', function () {
+    $this->actingAs(User::factory()->create());
+
+    Livewire::test('pages::settings.two-factor-setup-modal', ['requiresConfirmation' => true])
+        ->call('startTwoFactorSetup')
+        ->assertForbidden();
 });
 
 test('security settings page renders without two factor when feature is disabled', function () {
@@ -108,6 +184,7 @@ test('recovery codes are only loaded when requested', function () {
     ])->save();
 
     $this->actingAs($user);
+    session(['auth.password_confirmed_at' => time()]);
 
     Livewire::test('pages::settings.two-factor.recovery-codes')
         ->assertSet('recoveryCodes', [])

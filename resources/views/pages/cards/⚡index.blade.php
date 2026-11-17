@@ -2,12 +2,15 @@
 
 use App\Concerns\ManagesTransactions;
 use App\Enums\CardType;
+use App\Enums\TransactionCategory;
 use App\Models\Account;
 use App\Models\Card;
+use Carbon\CarbonImmutable;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Livewire\Attributes\Computed;
 use Livewire\Attributes\Title;
@@ -59,6 +62,156 @@ new #[Title('Cards')] class extends Component {
             : 0;
     }
 
+    protected function defaultMonthStart(): CarbonImmutable
+    {
+        $today = now()->toImmutable()->startOfDay();
+
+        return $this->activeCard?->isCredit()
+            ? CarbonImmutable::parse($this->activeCard->invoiceMonthFor($today->toDateString()).'-01')
+            : $today->startOfMonth();
+    }
+
+    protected function periodFor(CarbonImmutable $monthStart): array
+    {
+        if ($this->activeCard?->isCredit()) {
+            [$start, $end] = $this->activeCard->invoicePeriod($monthStart);
+
+            return [$start->toDateString(), $end->toDateString()];
+        }
+
+        return [$monthStart->toDateString(), $monthStart->endOfMonth()->toDateString()];
+    }
+
+    protected function monthForDate(string $date): string
+    {
+        return $this->activeCard?->isCredit() ? $this->activeCard->invoiceMonthFor($date) : substr($date, 0, 7);
+    }
+
+    /**
+     * Fatura do mês exibido (somente cartão de crédito).
+     *
+     * @return array{start: CarbonImmutable, end: CarbonImmutable, due: CarbonImmutable, total: int, paid: int, remaining: int, payments: \Illuminate\Support\Collection, status: string}|null
+     */
+    #[Computed]
+    public function invoice(): ?array
+    {
+        $card = $this->activeCard;
+
+        if (! $card?->isCredit()) {
+            return null;
+        }
+
+        $month = $this->monthStart();
+        [$start, $end] = $card->invoicePeriod($month);
+        $due = $card->dueDateFor($month);
+        $payments = $card->payments()->where('month', $month->format('Y-m'))->orderBy('id')->get();
+        $total = (int) $this->transactions->sum('amount');
+        $paid = (int) $payments->sum('amount');
+        $remaining = max(0, $total - $paid);
+        $today = now()->toImmutable()->startOfDay();
+
+        return [
+            'start' => $start,
+            'end' => $end,
+            'due' => $due,
+            'total' => $total,
+            'paid' => $paid,
+            'remaining' => $remaining,
+            'payments' => $payments,
+            // Só é "paga" quando nada falta pagar; compras novas reabrem a fatura.
+            'status' => match (true) {
+                $paid > 0 && $remaining === 0 => 'paid',
+                $today->greaterThan($due) => 'overdue',
+                $today->greaterThan($end) => 'closed',
+                default => 'open',
+            },
+        ];
+    }
+
+    /**
+     * Limite já comprometido: compras do cartão que ainda não foram pagas.
+     */
+    #[Computed]
+    public function usedCredit(): int
+    {
+        $card = $this->activeCard;
+
+        if (! $card?->isCredit()) {
+            return 0;
+        }
+
+        return max(0, (int) $card->transactions()->sum('amount') - (int) $card->payments()->sum('amount'));
+    }
+
+    public function confirmPayInvoice(): void
+    {
+        $invoice = $this->invoice;
+
+        if (! $invoice || $invoice['remaining'] <= 0) {
+            Flux::toast(variant: 'danger', text: __('This invoice cannot be paid.'));
+
+            return;
+        }
+
+        Flux::modal('confirm-invoice-payment')->show();
+    }
+
+    public function payInvoice(): void
+    {
+        $card = $this->activeCard;
+        $invoice = $this->invoice;
+
+        if (! $card || ! $invoice || $invoice['remaining'] <= 0) {
+            Flux::modal('confirm-invoice-payment')->close();
+            Flux::toast(variant: 'danger', text: __('This invoice cannot be paid.'));
+
+            return;
+        }
+
+        $month = $this->monthStart()->format('Y-m');
+
+        DB::transaction(function () use ($card, $invoice, $month): void {
+            $transaction = $card->account->transactions()->create([
+                'user_id' => Auth::id(),
+                'type' => 'expense',
+                'category' => TransactionCategory::CardBill->value,
+                'description' => __('Invoice :card - :month', ['card' => $card->name, 'month' => $this->monthLabel]),
+                'amount' => $invoice['remaining'],
+                'date' => now()->toDateString(),
+            ]);
+
+            $card->payments()->create([
+                'user_id' => Auth::id(),
+                'account_id' => $card->account_id,
+                'transaction_id' => $transaction->id,
+                'month' => $month,
+                'amount' => $invoice['remaining'],
+                'paid_at' => now()->toDateString(),
+            ]);
+        });
+
+        $this->forgetTransactionCaches();
+        Flux::modal('confirm-invoice-payment')->close();
+        Flux::toast(variant: 'success', text: __('Invoice paid.'));
+    }
+
+    public function undoInvoicePayment(int $id): void
+    {
+        $card = $this->activeCard;
+        abort_unless($card, 404);
+
+        $payment = $card->payments()->findOrFail($id);
+
+        DB::transaction(function () use ($payment): void {
+            $transaction = $payment->transaction;
+            $payment->delete();
+            $transaction?->delete();
+        });
+
+        $this->forgetTransactionCaches();
+        Flux::toast(variant: 'success', text: __('Payment undone.'));
+    }
+
     protected function transactionOwner(): ?Model
     {
         return $this->activeCard;
@@ -71,7 +224,7 @@ new #[Title('Cards')] class extends Component {
 
     protected function forgetOwnerCaches(): void
     {
-        unset($this->cards, $this->activeCard);
+        unset($this->cards, $this->activeCard, $this->invoice, $this->usedCredit);
     }
 
     public function select(int $id): void
@@ -249,9 +402,23 @@ new #[Title('Cards')] class extends Component {
             $ids = $this->cards->pluck('id')->values();
             $position = $ids->search($card->id);
             $spent = $this->monthTotals['expense'];
+            $used = $this->usedCredit;
             $usage = ($card->isCredit() && $card->credit_limit > 0)
-                ? min(100, (int) round($spent / $card->credit_limit * 100))
+                ? min(100, (int) round($used / $card->credit_limit * 100))
                 : null;
+            $invoice = $this->invoice;
+            $statusColor = match ($invoice['status'] ?? null) {
+                'paid' => 'green',
+                'overdue' => 'red',
+                'closed' => 'amber',
+                default => 'zinc',
+            };
+            $statusLabel = match ($invoice['status'] ?? null) {
+                'paid' => __('Paid'),
+                'overdue' => __('Overdue'),
+                'closed' => __('Closed'),
+                default => __('Open'),
+            };
         @endphp
 
         <x-switcher
@@ -313,25 +480,26 @@ new #[Title('Cards')] class extends Component {
                         </flux:dropdown>
                     </div>
 
-                    <div class="mt-4 grid grid-cols-2 gap-4">
-                        <div>
-                            <div class="text-sm text-zinc-400">{{ __('Spent in the month') }}</div>
-                            <div class="mt-1 text-2xl font-semibold text-red-400">{{ \App\Support\Money::format($spent) }}</div>
+                    @if ($card->isCredit())
+                        <div class="mt-4 grid grid-cols-2 gap-4">
+                            <div>
+                                <div class="flex items-center gap-2 text-sm text-zinc-400">
+                                    {{ __('Invoice') }}
+                                    <flux:badge size="sm" :color="$statusColor">{{ $statusLabel }}</flux:badge>
+                                </div>
+                                <div @class(['mt-1 text-2xl font-semibold', 'text-red-400' => $invoice['remaining'] > 0, 'text-emerald-400' => $invoice['remaining'] === 0])>{{ \App\Support\Money::format($invoice['remaining']) }}</div>
+                            </div>
+
+                            <div>
+                                <div class="text-sm text-zinc-400">{{ __('Available limit') }}</div>
+                                <div class="mt-1 text-2xl font-semibold text-white">{{ \App\Support\Money::format(max(0, $card->credit_limit - $used)) }}</div>
+                            </div>
                         </div>
 
-                        @if ($card->isCredit())
-                            <div>
-                                <div class="text-sm text-zinc-400">{{ __('Credit limit') }}</div>
-                                <div class="mt-1 text-2xl font-semibold text-white">{{ \App\Support\Money::format($card->credit_limit) }}</div>
-                            </div>
-                        @endif
-                    </div>
-
-                    @if ($card->isCredit())
                         @if ($usage !== null)
                             <div class="mt-3">
                                 <div class="mb-1 flex justify-between text-xs text-zinc-400">
-                                    <span>{{ __('Limit used') }}</span>
+                                    <span>{{ __('Used :used of :limit', ['used' => \App\Support\Money::format($used), 'limit' => \App\Support\Money::format($card->credit_limit)]) }}</span>
                                     <span>{{ $usage }}%</span>
                                 </div>
                                 <div class="h-2 overflow-hidden rounded-full bg-zinc-800">
@@ -340,9 +508,24 @@ new #[Title('Cards')] class extends Component {
                             </div>
                         @endif
 
-                        <div class="mt-3 flex gap-6 text-sm text-zinc-400">
-                            <span>{{ __('Closes') }}: <span class="font-medium text-white">{{ __('Day :day', ['day' => $card->closing_day]) }}</span></span>
-                            <span>{{ __('Due') }}: <span class="font-medium text-white">{{ __('Day :day', ['day' => $card->due_day]) }}</span></span>
+                        <div class="mt-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+                            <div class="flex flex-wrap gap-x-6 text-sm text-zinc-400">
+                                <span>{{ __('Closes') }}: <span class="font-medium text-white">{{ $invoice['end']->format('d/m') }}</span></span>
+                                <span>{{ __('Due') }}: <span class="font-medium text-white">{{ $invoice['due']->format('d/m/Y') }}</span></span>
+                            </div>
+
+                            <div class="flex gap-2">
+                                @if ($invoice['remaining'] > 0)
+                                    <flux:button size="sm" variant="primary" icon="banknotes" wire:click="confirmPayInvoice" data-test="pay-invoice-button">
+                                        {{ __('Pay invoice') }}
+                                    </flux:button>
+                                @endif
+                            </div>
+                        </div>
+                    @else
+                        <div class="mt-4">
+                            <div class="text-sm text-zinc-400">{{ __('Spent in the month') }}</div>
+                            <div class="mt-1 text-2xl font-semibold text-red-400">{{ \App\Support\Money::format($spent) }}</div>
                         </div>
                     @endif
                 </div>
@@ -357,7 +540,12 @@ new #[Title('Cards')] class extends Component {
             />
         </div>
 
-        <x-transactions-panel :transactions="$this->transactions" :month-label="$this->monthLabel" />
+        <x-transactions-panel
+            :transactions="$this->transactions"
+            :month-label="$this->monthLabel"
+            :period="$invoice ? $invoice['start']->format('d/m').' – '.$invoice['end']->format('d/m') : null"
+            :payments="$invoice ? $invoice['payments'] : collect()"
+        />
     @endif
 
     <x-transaction-modals
@@ -365,6 +553,32 @@ new #[Title('Cards')] class extends Component {
         :categories="$this->categoryOptions"
         :editing="(bool) $editingTransactionId"
     />
+
+    <flux:modal name="confirm-invoice-payment" class="min-w-[22rem]">
+        @if ($this->invoice && $this->activeCard)
+            <div class="space-y-6">
+                <div>
+                    <flux:heading size="lg">{{ __('Pay invoice') }}</flux:heading>
+                    <flux:text class="mt-2">
+                        {{ __('The invoice amount of :amount will be deducted today from the account :account.', [
+                            'amount' => \App\Support\Money::format($this->invoice['remaining']),
+                            'account' => $this->activeCard->account->name,
+                        ]) }}
+                    </flux:text>
+                </div>
+
+                <div class="flex gap-2">
+                    <flux:spacer />
+                    <flux:modal.close>
+                        <flux:button variant="ghost">{{ __('Cancel') }}</flux:button>
+                    </flux:modal.close>
+                    <flux:button variant="primary" wire:click="payInvoice" data-test="confirm-pay-invoice-button">
+                        {{ __('Pay invoice') }}
+                    </flux:button>
+                </div>
+            </div>
+        @endif
+    </flux:modal>
 
     <flux:modal name="card-form" class="md:w-96">
         <form wire:submit="save" class="space-y-6">

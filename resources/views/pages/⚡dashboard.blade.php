@@ -106,6 +106,8 @@ new #[Title('Dashboard')] class extends Component {
         $rows = DB::table('transactions')
             ->where('user_id', Auth::id())
             ->where('type', 'expense')
+            // O pagamento da fatura já está nas compras do cartão: não contar duas vezes.
+            ->where('category', '!=', TransactionCategory::CardBill->value)
             ->whereBetween('date', $this->monthRange())
             ->selectRaw('category, sum(amount) as total')
             ->groupBy('category')

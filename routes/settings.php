@@ -9,10 +9,9 @@ Route::middleware(['auth'])->group(function () {
 });
 
 Route::middleware(['auth', 'verified'])->group(function () {
+    // Abre direto, como o Perfil. A confirmação de senha para 2FA e chaves de
+    // acesso é pedida dentro da própria página (veja a tela de Segurança).
     Route::livewire('settings/security', 'pages::settings.security')
-        ->middleware([
-            'password.confirm',
-        ])
         ->name('security.edit');
 });
 

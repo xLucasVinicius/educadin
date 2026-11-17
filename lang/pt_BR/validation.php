@@ -192,5 +192,10 @@ return [
         'amount' => 'valor',
         'date' => 'data',
         'category' => 'categoria',
+        'croppedPhoto' => 'foto',
+        'transferTo' => 'conta de destino',
+        'transferAmount' => 'valor',
+        'transferDate' => 'data',
+        'transferDescription' => 'descrição',
     ],
 ];

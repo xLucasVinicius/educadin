@@ -1,6 +1,7 @@
 <?php
 
 use App\Concerns\ProfileValidationRules;
+use App\Support\Avatar;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Flux\Flux;
 use Illuminate\Support\Facades\Auth;
@@ -15,6 +16,9 @@ new #[Title('Profile settings')] class extends Component {
 
     public string $name = '';
     public string $email = '';
+
+    /** Foto já recortada pelo navegador, em data URL (JPEG). */
+    public string $croppedPhoto = '';
 
     /**
      * Mount the component.
@@ -47,6 +51,45 @@ new #[Title('Profile settings')] class extends Component {
         $user->save();
 
         Flux::toast(variant: 'success', text: __('Profile updated.'));
+    }
+
+    /**
+     * Salva a foto de perfil enviada já recortada pelo navegador.
+     */
+    public function savePhoto(): void
+    {
+        $this->validate([
+            'croppedPhoto' => ['required', 'string', 'max:2500000'],
+        ], [
+            'croppedPhoto.required' => __('Choose a photo first.'),
+            'croppedPhoto.max' => __('The photo is too large.'),
+        ]);
+
+        $jpeg = Avatar::fromDataUrl($this->croppedPhoto);
+
+        if ($jpeg === null) {
+            $this->addError('croppedPhoto', __('The photo must be a valid JPG, PNG or WebP image.'));
+
+            return;
+        }
+
+        Avatar::store(Auth::user(), $jpeg);
+
+        $this->reset('croppedPhoto');
+        Flux::toast(variant: 'success', text: __('Profile photo updated.'));
+
+        // Recarrega a página para a foto nova aparecer também no menu lateral.
+        $this->redirectRoute('profile.edit', navigate: true);
+    }
+
+    public function removePhoto(): void
+    {
+        Avatar::remove(Auth::user());
+
+        $this->reset('croppedPhoto');
+        Flux::toast(variant: 'success', text: __('Profile photo removed.'));
+
+        $this->redirectRoute('profile.edit', navigate: true);
     }
 
     /**
@@ -87,6 +130,12 @@ new #[Title('Profile settings')] class extends Component {
     <flux:heading level="2" class="sr-only">{{ __('Profile settings') }}</flux:heading>
 
     <x-pages::settings.layout :heading="__('Profile')" :subheading="__('Update your name and email address')">
+        <x-avatar-cropper
+            :url="Auth::user()->avatarUrl()"
+            :name="Auth::user()->name"
+            :initials="Auth::user()->initials()"
+        />
+
         <form wire:submit="updateProfileInformation" class="my-6 w-full space-y-6">
             <flux:input wire:model="name" :label="__('Name')" type="text" required autofocus autocomplete="name" />
 
