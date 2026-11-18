@@ -38,6 +38,13 @@ Route::middleware(['auth', 'verified', EnsureUserIsNotSuspended::class, Generate
 // Painel de admin: só admins (os demais recebem 404).
 Route::middleware(['auth', 'verified', EnsureUserIsNotSuspended::class, EnsureUserIsAdmin::class])->group(function () {
     Route::livewire('admin', 'pages::admin.index')->name('admin.index');
+
+    // Foto de perfil de qualquer usuário, só para quem administra.
+    Route::get('admin/users/{user}/photo', function (\App\Models\User $user) {
+        abort_unless($user->avatar_path && Storage::disk('local')->exists($user->avatar_path), 404);
+
+        return Storage::disk('local')->response($user->avatar_path, null, ['Cache-Control' => 'private, max-age=31536000, immutable']);
+    })->name('admin.users.photo');
 });
 
 require __DIR__.'/settings.php';

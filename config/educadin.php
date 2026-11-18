@@ -14,10 +14,26 @@ return [
     |
     */
 
-    'owner_emails' => array_values(array_filter(array_map(
+    'owner_emails' => array_values(array_unique(array_filter(array_map(
         fn (string $email) => strtolower(trim($email)),
-        explode(',', (string) env('ADMIN_EMAILS', '')),
-    ))),
+        [...explode(',', (string) env('ADMIN_EMAILS', '')), (string) env('OWNER_EMAIL', '')],
+    )))),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Perfil fixo do dono (id 1)
+    |--------------------------------------------------------------------------
+    |
+    | O seeder cria este usuário com id 1 a partir do .env (OWNER_NAME,
+    | OWNER_EMAIL e OWNER_PASSWORD). A senha nunca fica gravada no código.
+    |
+    */
+
+    'owner' => [
+        'name' => env('OWNER_NAME', 'Dono'),
+        'email' => env('OWNER_EMAIL'),
+        'password' => env('OWNER_PASSWORD'),
+    ],
 
     /*
     |--------------------------------------------------------------------------

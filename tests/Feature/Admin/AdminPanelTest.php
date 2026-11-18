@@ -295,3 +295,33 @@ test('every user shows the plan badge: free, premium or expired', function () {
         ->assertSeeText(__('Premium'))
         ->assertSeeText(__('Premium expired'));
 });
+
+test('the admin list shows the profile photo of users who have one', function () {
+    \Illuminate\Support\Facades\Storage::fake('local');
+    \Illuminate\Support\Facades\Storage::disk('local')->put('avatars/foto.jpg', 'conteudo');
+
+    $admin = adminUser();
+    $with = User::factory()->create(['avatar_path' => 'avatars/foto.jpg']);
+    $without = User::factory()->create();
+    $this->actingAs($admin);
+
+    Livewire::test('pages::admin.index')
+        ->assertSee('data-test="admin-user-photo-'.$with->id.'"', false)
+        ->assertDontSee('data-test="admin-user-photo-'.$without->id.'"', false);
+});
+
+test('admins can load a user photo, others cannot', function () {
+    \Illuminate\Support\Facades\Storage::fake('local');
+    \Illuminate\Support\Facades\Storage::disk('local')->put('avatars/foto.jpg', 'conteudo');
+
+    $target = User::factory()->create(['avatar_path' => 'avatars/foto.jpg']);
+    $noPhoto = User::factory()->create();
+
+    $this->actingAs(User::factory()->create())->get(route('admin.users.photo', $target))->assertNotFound();
+
+    $this->actingAs(adminUser())
+        ->get(route('admin.users.photo', $target))->assertOk();
+
+    $this->actingAs(adminUser())
+        ->get(route('admin.users.photo', $noPhoto))->assertNotFound();
+});

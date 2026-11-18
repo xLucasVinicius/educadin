@@ -231,8 +231,8 @@ new #[Title('Admin')] class extends Component {
     }
 }; ?>
 
-<section class="flex w-full flex-col gap-6">
-    <div>
+<section class="flex w-full flex-col gap-4 lg:h-[calc(100dvh-4.5rem)]">
+    <div class="shrink-0">
         <flux:heading size="xl" level="1">{{ __('Admin') }}</flux:heading>
         <flux:subheading>{{ __('Registered users and access. Financial data is never shown here.') }}</flux:subheading>
     </div>
@@ -251,7 +251,7 @@ new #[Title('Admin')] class extends Component {
         $me = auth()->user();
     @endphp
 
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7" data-test="admin-stats">
+    <div class="grid shrink-0 grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7" data-test="admin-stats">
         @foreach ($cards as $card)
             <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
                 <div class="text-sm text-zinc-400">{{ $card['label'] }}</div>
@@ -260,7 +260,7 @@ new #[Title('Admin')] class extends Component {
         @endforeach
     </div>
 
-    <div class="flex items-center justify-between gap-3">
+    <div class="flex shrink-0 items-center justify-between gap-3">
         <flux:heading size="lg">{{ __('Users') }}</flux:heading>
         <div class="w-full max-w-xs">
             <flux:input wire:model.live.debounce.300ms="search" icon="magnifying-glass" :placeholder="__('Search by name or e-mail')" clearable data-test="admin-search" />
@@ -272,12 +272,21 @@ new #[Title('Admin')] class extends Component {
             <flux:text>{{ __('No users found.') }}</flux:text>
         </div>
     @else
-        <div class="divide-y divide-zinc-800 rounded-xl border border-zinc-800 bg-zinc-900/40">
+        <div class="min-h-0 flex-1 divide-y divide-zinc-800 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900/40" data-test="admin-user-list">
             @foreach ($this->users as $user)
                 <div wire:key="user-{{ $user->id }}" class="flex flex-wrap items-center gap-4 px-4 py-3">
-                    <div class="flex size-10 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-sm font-semibold text-zinc-200">
-                        {{ $user->initials() }}
-                    </div>
+                    @if ($user->avatar_path)
+                        <img
+                            src="{{ route('admin.users.photo', ['user' => $user, 'v' => substr(md5($user->avatar_path), 0, 8)]) }}"
+                            alt="{{ $user->name }}"
+                            class="size-10 shrink-0 rounded-full object-cover"
+                            data-test="admin-user-photo-{{ $user->id }}"
+                        />
+                    @else
+                        <div class="flex size-10 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-sm font-semibold text-zinc-200">
+                            {{ $user->initials() }}
+                        </div>
+                    @endif
 
                     <div class="min-w-0 flex-1">
                         <div class="flex flex-wrap items-center gap-2">
@@ -346,7 +355,9 @@ new #[Title('Admin')] class extends Component {
             @endforeach
         </div>
 
-        <flux:pagination :paginator="$this->users" />
+        <div class="shrink-0">
+            <flux:pagination :paginator="$this->users" />
+        </div>
     @endif
 
     <flux:modal name="confirm-suspension" class="min-w-[22rem]">

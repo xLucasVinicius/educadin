@@ -58,8 +58,43 @@ class DatabaseSeeder extends Seeder
             ->forceFill(['plan' => 'premium'])->save();
     }
 
+    /**
+     * Perfil fixo do dono: sempre o usuário de id 1, com os dados do .env.
+     * Premium sem vencimento, e-mail verificado.
+     */
+    private function seedOwner(): void
+    {
+        $owner = config('educadin.owner');
+
+        if (blank($owner['email'] ?? null) || blank($owner['password'] ?? null)) {
+            $this->command?->warn('OWNER_EMAIL e OWNER_PASSWORD não estão no .env: o perfil fixo do dono (id 1) não foi criado.');
+
+            return;
+        }
+
+        $user = User::find(1) ?? new User;
+
+        if ($user->exists && Str::lower($user->email) !== Str::lower($owner['email'])) {
+            $this->command?->warn('O id 1 já pertence a outro usuário: o perfil do dono não foi criado.');
+
+            return;
+        }
+
+        $user->forceFill([
+            'id' => 1,
+            'name' => $owner['name'],
+            'email' => $owner['email'],
+            'password' => $owner['password'],
+            'email_verified_at' => now(),
+            'plan' => 'premium',
+            'premium_until' => null,
+        ])->save();
+    }
+
     public function run(): void
     {
+        $this->seedOwner();
+
         $user = User::factory()->create([
             'name' => 'Test User',
             'email' => 'test@example.com',
