@@ -20,6 +20,44 @@ class DatabaseSeeder extends Seeder
     /**
      * Seed the application's database.
      */
+    /**
+     * Contas de teste para o painel de admin (senha de todas: "password").
+     * O dono do sistema vem de ADMIN_EMAILS no .env, não do seeder.
+     */
+    private function seedAdminDemoUsers(): void
+    {
+        User::factory()->create(['name' => 'Admin Teste', 'email' => 'admin@example.com'])
+            ->forceFill(['is_admin' => true])->save();
+
+        User::factory()->create(['name' => 'Maria Silva', 'email' => 'maria@example.com', 'created_at' => now()->subDays(2)])
+            ->forceFill(['plan' => 'premium', 'premium_until' => now()->addDays(30)->toDateString()])->save();
+
+        User::factory()->create(['name' => 'João Souza', 'email' => 'joao@example.com', 'created_at' => now()->subDays(12)]);
+
+        User::factory()->create(['name' => 'Ana Costa', 'email' => 'ana@example.com', 'created_at' => now()->subDays(25)])
+            ->forceFill(['suspended_at' => now()->subDay()])->save();
+
+        User::factory()->unverified()->create(['name' => 'Pedro Lima', 'email' => 'pedro@example.com', 'created_at' => now()->subHours(5)]);
+
+        // Premium vencido com mais itens que o limite do Gratuito: mostra o bloqueio.
+        $expired = User::factory()->create(['name' => 'Rafael Prado', 'email' => 'rafael@example.com', 'created_at' => now()->subDays(90)]);
+        $expired->forceFill(['plan' => 'premium', 'premium_until' => now()->subDays(3)->toDateString()])->save();
+        $expiredAccounts = $expired->accounts()->createMany([
+            ['name' => 'Conta principal', 'type' => AccountType::Checking, 'color' => AccountColor::Orange, 'initial_balance' => 150000],
+            ['name' => 'Carteira', 'type' => AccountType::Salary, 'color' => AccountColor::Emerald, 'initial_balance' => 20000],
+            ['name' => 'Reserva', 'type' => AccountType::Savings, 'color' => AccountColor::Violet, 'initial_balance' => 500000],
+            ['name' => 'Conta extra', 'type' => AccountType::Digital, 'color' => AccountColor::Sky, 'initial_balance' => 80000],
+        ]);
+        $expired->cards()->createMany([
+            ['account_id' => $expiredAccounts[0]->id, 'name' => 'Crédito principal', 'type' => CardType::Credit, 'credit_limit' => 300000, 'closing_day' => 20, 'due_day' => 28],
+            ['account_id' => $expiredAccounts[0]->id, 'name' => 'Débito', 'type' => CardType::Debit],
+            ['account_id' => $expiredAccounts[1]->id, 'name' => 'Crédito extra', 'type' => CardType::Credit, 'credit_limit' => 100000, 'closing_day' => 10, 'due_day' => 18],
+        ]);
+
+        User::factory()->create(['name' => 'Carla Dias', 'email' => 'carla@example.com', 'created_at' => now()->subDays(60)])
+            ->forceFill(['plan' => 'premium'])->save();
+    }
+
     public function run(): void
     {
         $user = User::factory()->create([
@@ -82,6 +120,8 @@ class DatabaseSeeder extends Seeder
             'category' => Cat::Leisure, 'day_of_month' => 2, 'next_due_on' => $day(1),
         ]);
         $recurring->generateDue();
+
+        $this->seedAdminDemoUsers();
 
         $cards[1]->transactions()->createMany([
             ['user_id' => $user->id, 'type' => $out, 'description' => 'Combustível', 'amount' => 25000, 'date' => $day(2), 'category' => Cat::Transport],

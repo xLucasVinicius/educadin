@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\RecurringTransaction;
 use App\Models\Transaction;
+use App\Support\PlanLimits;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -213,9 +214,25 @@ trait ManagesTransactions
         $this->forgetTransactionCaches();
     }
 
+    /** Item bloqueado pelo plano (acima do limite): nada pode ser criado ou editado nele. */
+    protected function blockedByPlan(): bool
+    {
+        if (! PlanLimits::isLocked(Auth::user(), $this->transactionOwner())) {
+            return false;
+        }
+
+        Flux::toast(variant: 'danger', text: __('This item is locked by your plan.'));
+
+        return true;
+    }
+
     public function createTransaction(): void
     {
         abort_unless($this->transactionOwner(), 404);
+
+        if ($this->blockedByPlan()) {
+            return;
+        }
 
         $this->resetValidation();
         $this->reset('editingTransactionId', 'description', 'category');
@@ -232,6 +249,10 @@ trait ManagesTransactions
     {
         $owner = $this->transactionOwner();
         abort_unless($owner, 404);
+
+        if ($this->blockedByPlan()) {
+            return;
+        }
 
         $transaction = $owner->transactions()->findOrFail($id);
 
@@ -257,6 +278,10 @@ trait ManagesTransactions
         $owner = $this->transactionOwner();
         abort_unless($owner, 404);
 
+        if ($this->blockedByPlan()) {
+            return;
+        }
+
         if (! $this->allowsIncome()) {
             $this->kind = 'expense';
         }
@@ -269,8 +294,17 @@ trait ManagesTransactions
         $usesInstallments = $this->allowsInstallments() && ! $this->editingTransactionId && ! $repeats;
         $count = $usesInstallments ? $this->installments : 1;
 
+        if ($repeats && PlanLimits::reached(Auth::user(), 'recurring')) {
+            Flux::toast(variant: 'danger', text: __('You reached the Free plan limit of :limit :items. Subscribe to Premium to add more.', [
+                'limit' => PlanLimits::limit(Auth::user(), 'recurring'),
+                'items' => __('active recurring transactions'),
+            ]));
+
+            return;
+        }
+
         $validated = $this->validate([
-            'installments' => $usesInstallments ? ['required', 'integer', 'between:1,24'] : ['nullable'],
+            'installments' => $usesInstallments ? ['required', 'integer', 'between:1,'.PlanLimits::installmentsMax(Auth::user())] : ['nullable'],
             'kind' => ['required', Rule::enum(TransactionType::class)],
             'description' => ['required', 'string', 'max:150'],
             'amount' => [
@@ -384,6 +418,10 @@ trait ManagesTransactions
         $owner = $this->transactionOwner();
         abort_unless($owner, 404);
 
+        if ($this->blockedByPlan()) {
+            return;
+        }
+
         $recurring = $owner->recurringTransactions()->whereNull('cancelled_at')->findOrFail($id);
 
         $this->resetValidation();
@@ -400,6 +438,10 @@ trait ManagesTransactions
     {
         $owner = $this->transactionOwner();
         abort_unless($owner, 404);
+
+        if ($this->blockedByPlan()) {
+            return;
+        }
 
         $recurring = $owner->recurringTransactions()->whereNull('cancelled_at')->findOrFail($this->editingRecurringId);
 

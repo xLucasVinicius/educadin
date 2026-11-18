@@ -44,6 +44,18 @@ enum TransactionCategory: string
         };
     }
 
+    /**
+     * Gasto essencial (moradia, comida, saúde...) ou não essencial (lazer,
+     * compras...). Usado na tela de Desempenho; receitas não se aplicam.
+     */
+    public function isEssential(): bool
+    {
+        return match ($this) {
+            self::Housing, self::Food, self::Transport, self::Health, self::Education, self::Bills => true,
+            default => false,
+        };
+    }
+
     public function type(): TransactionType
     {
         return match ($this) {

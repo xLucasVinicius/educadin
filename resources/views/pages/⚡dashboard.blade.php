@@ -17,15 +17,9 @@ new #[Title('Dashboard')] class extends Component {
     /** Cores do gráfico de categorias (da maior para a menor fatia). */
     private const PALETTE = ['#f2a900', '#38bdf8', '#34d399', '#a78bfa', '#fb7185', '#fb923c', '#71717a'];
 
-    /** Mês exibido no formato "2026-11". Vazio = mês atual. */
-    public string $month = '';
-
+    /** O painel é só um resumo: sempre mostra o mês atual (o resto fica no Desempenho). */
     protected function monthStart(): CarbonImmutable
     {
-        if (preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $this->month)) {
-            return CarbonImmutable::parse($this->month.'-01')->startOfDay();
-        }
-
         return now()->startOfMonth();
     }
 
@@ -37,16 +31,6 @@ new #[Title('Dashboard')] class extends Component {
         $start = $this->monthStart();
 
         return [$start->toDateString(), $start->endOfMonth()->toDateString()];
-    }
-
-    public function previousMonth(): void
-    {
-        $this->month = $this->monthStart()->subMonthNoOverflow()->format('Y-m');
-    }
-
-    public function nextMonth(): void
-    {
-        $this->month = $this->monthStart()->addMonthNoOverflow()->format('Y-m');
     }
 
     #[Computed]
@@ -148,15 +132,17 @@ new #[Title('Dashboard')] class extends Component {
     }
 
     /**
-     * Saldo total das contas no fim de cada um dos últimos 6 meses.
+     * Saldo total das contas no fim de cada mês do ano exibido (janeiro a
+     * dezembro). Meses que ainda não chegaram vêm sem valor (null).
      *
-     * @return array<int, array{label: string, value: int}>
+     * @return array<int, array{label: string, full: string, value: int|null}>
      */
     #[Computed]
     public function balanceSeries(): array
     {
-        $first = $this->monthStart()->subMonthsNoOverflow(5);
-        $end = $this->monthStart()->endOfMonth();
+        $first = CarbonImmutable::create($this->monthStart()->year, 1, 1)->startOfDay();
+        $end = $first->endOfYear();
+        $currentMonth = now()->toImmutable()->startOfMonth();
 
         $running = (int) DB::table('accounts')->where('user_id', Auth::id())->sum('initial_balance');
 
@@ -168,7 +154,7 @@ new #[Title('Dashboard')] class extends Component {
             ->groupBy('ym')
             ->pluck('net', 'ym');
 
-        // Tudo o que aconteceu antes do primeiro mês exibido já conta no ponto de partida.
+        // Tudo o que aconteceu antes do ano exibido já conta no ponto de partida.
         foreach ($nets as $ym => $net) {
             if ($ym < $first->format('Y-m')) {
                 $running += (int) $net;
@@ -177,13 +163,14 @@ new #[Title('Dashboard')] class extends Component {
 
         $series = [];
 
-        for ($i = 0; $i < 6; $i++) {
+        for ($i = 0; $i < 12; $i++) {
             $month = $first->addMonthsNoOverflow($i);
             $running += (int) ($nets[$month->format('Y-m')] ?? 0);
 
             $series[] = [
                 'label' => Str::ucfirst($month->locale(app()->getLocale())->translatedFormat('M')),
-                'value' => $running,
+                'full' => Str::ucfirst($month->locale(app()->getLocale())->translatedFormat('F \\d\\e Y')),
+                'value' => $month->greaterThan($currentMonth) ? null : $running,
             ];
         }
 
@@ -191,49 +178,75 @@ new #[Title('Dashboard')] class extends Component {
     }
 
     /**
-     * Geometria (SVG) do gráfico de evolução do saldo.
+     * Geometria (SVG) do gráfico de evolução do saldo, com eixos e pontos.
      *
-     * @return array{line: string, area: string, dots: array<int, array{x: float, y: float, label: string, value: int}>, zeroY: float|null, width: int, height: int}
+     * @return array{line: string, area: string, months: array<int, array{x: float, label: string}>, dots: array<int, array{i: int, x: float, y: float, label: string, full: string, value: int, text: string}>, ticks: array<int, array{y: float, label: string, zero: bool}>, width: int, height: int, left: int, right: int, top: int, bottom: int}
      */
     #[Computed]
     public function chart(): array
     {
         $series = $this->balanceSeries;
-        $width = 600;
-        $height = 200;
-        $padX = 24;
-        $padY = 24;
+        $width = 640;
+        $left = 76;   // espaço para os valores do eixo vertical
+        $right = 28;
+        $top = 20;
+        $bottom = 210; // base da área do gráfico; abaixo ficam os meses
+        $height = 234;
 
-        $values = array_column($series, 'value');
-        $min = min($values);
-        $max = max($values);
-        $spread = ($max - $min) ?: 1000;
-        $min -= $spread * 0.1;
-        $max += $spread * 0.1;
+        // Só os meses que já chegaram têm ponto; o ano inteiro fica no eixo.
+        $values = array_values(array_filter(array_column($series, 'value'), fn ($v) => $v !== null)) ?: [0];
+        $ticks = Money::niceTicks(min($values), max($values));
+        $min = $ticks[0];
+        $max = $ticks[count($ticks) - 1];
 
         $count = count($series);
-        $x = fn (int $i): float => $padX + $i * ($width - 2 * $padX) / ($count - 1);
-        $y = fn (int|float $v): float => $padY + ($max - $v) / ($max - $min) * ($height - 2 * $padY);
+        $x = fn (int $i): float => $left + $i * ($width - $left - $right) / ($count - 1);
+        $y = fn (int|float $v): float => $top + ($max - $v) / ($max - $min) * ($bottom - $top);
 
         $dots = [];
+        $months = [];
         foreach ($series as $i => $point) {
-            $dots[] = ['x' => round($x($i), 1), 'y' => round($y($point['value']), 1)] + $point;
+            $months[] = ['x' => round($x($i), 1), 'label' => $point['label']];
+
+            if ($point['value'] === null) {
+                continue;
+            }
+
+            $dots[] = [
+                'i' => $i,
+                'x' => round($x($i), 1),
+                'y' => round($y($point['value']), 1),
+                'text' => Money::format($point['value']),
+            ] + $point;
         }
 
         $line = implode(' ', array_map(fn ($d) => $d['x'].','.$d['y'], $dots));
-        $last = end($dots);
-        $firstDot = $dots[0];
-        $area = 'M '.$firstDot['x'].','.$firstDot['y'].' L '
-            .implode(' L ', array_map(fn ($d) => $d['x'].','.$d['y'], $dots))
-            .' L '.$last['x'].','.$height.' L '.$firstDot['x'].','.$height.' Z';
+        $area = '';
+
+        if ($dots !== []) {
+            $last = end($dots);
+            $firstDot = $dots[0];
+            $area = 'M '.$firstDot['x'].','.$firstDot['y'].' L '
+                .implode(' L ', array_map(fn ($d) => $d['x'].','.$d['y'], $dots))
+                .' L '.$last['x'].','.$bottom.' L '.$firstDot['x'].','.$bottom.' Z';
+        }
 
         return [
             'line' => $line,
             'area' => $area,
+            'months' => $months,
             'dots' => $dots,
-            'zeroY' => ($min <= 0 && $max >= 0) ? round($y(0), 1) : null,
+            'ticks' => array_map(fn (int $t) => [
+                'y' => round($y($t), 1),
+                'label' => Money::compact($t),
+                'zero' => $t === 0,
+            ], $ticks),
             'width' => $width,
             'height' => $height,
+            'left' => $left,
+            'right' => $right,
+            'top' => $top,
+            'bottom' => $bottom,
         ];
     }
 
@@ -279,11 +292,7 @@ new #[Title('Dashboard')] class extends Component {
             <flux:subheading>{{ __('A summary of your finances.') }}</flux:subheading>
         </div>
 
-        <div class="flex items-center rounded-lg border border-zinc-800">
-            <flux:button variant="ghost" size="sm" icon="chevron-left" wire:click="previousMonth" :aria-label="__('Previous month')" />
-            <span class="min-w-36 px-1 text-center text-sm font-medium">{{ $this->monthLabel }}</span>
-            <flux:button variant="ghost" size="sm" icon="chevron-right" wire:click="nextMonth" :aria-label="__('Next month')" />
-        </div>
+        <div class="rounded-lg border border-zinc-800 px-4 py-1.5 text-sm font-medium" data-test="current-month">{{ $this->monthLabel }}</div>
     </div>
 
     @if (! $this->hasAccounts)
@@ -332,6 +341,104 @@ new #[Title('Dashboard')] class extends Component {
         </div>
 
         <div class="grid min-h-0 flex-1 gap-4 lg:grid-cols-2 lg:grid-rows-2">
+            {{-- Evolução do saldo --}}
+            <div class="flex min-h-0 flex-col rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+                @php
+                    $chart = $this->chart;
+                    $year = $this->monthStart()->year;
+                    $lastDot = $chart['dots'] === [] ? null : end($chart['dots']);
+                @endphp
+
+                <div class="flex items-baseline justify-between gap-2">
+                    <flux:heading>{{ __('Balance evolution') }}</flux:heading>
+                    @if ($lastDot)
+                        <span class="text-xs text-zinc-500">
+                            {{ $year === now()->year ? __('Now') : $lastDot['label'] }}: <span class="font-medium text-white">{{ Money::format($lastDot['value']) }}</span>
+                        </span>
+                    @endif
+                </div>
+                <div class="text-xs text-zinc-500">{{ __('Total balance at the end of each month of :year', ['year' => $year]) }}</div>
+
+                <svg
+                    viewBox="0 0 {{ $chart['width'] }} {{ $chart['height'] }}"
+                    class="mt-2 min-h-0 w-full flex-1"
+                    role="img"
+                    aria-label="{{ __('Balance evolution') }}"
+                    x-data="{ active: null }"
+                    x-on:mouseleave="active = null"
+                >
+                    <defs>
+                        <linearGradient id="balance-fill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stop-color="#f2a900" stop-opacity="0.35" />
+                            <stop offset="100%" stop-color="#f2a900" stop-opacity="0" />
+                        </linearGradient>
+                    </defs>
+
+                    {{-- Eixo vertical: linhas de referência e valores --}}
+                    @foreach ($chart['ticks'] as $tick)
+                        <line
+                            x1="{{ $chart['left'] }}" x2="{{ $chart['width'] - $chart['right'] }}"
+                            y1="{{ $tick['y'] }}" y2="{{ $tick['y'] }}"
+                            stroke="{{ $tick['zero'] ? '#71717a' : '#27272a' }}"
+                            stroke-dasharray="{{ $tick['zero'] ? '4 4' : 'none' }}"
+                        />
+                        <text x="{{ $chart['left'] - 8 }}" y="{{ $tick['y'] + 4 }}" text-anchor="end" fill="#a1a1aa" font-size="11">{{ $tick['label'] }}</text>
+                    @endforeach
+
+                    <path d="{{ $chart['area'] }}" fill="url(#balance-fill)" />
+                    <polyline points="{{ $chart['line'] }}" fill="none" stroke="#f2a900" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+
+                    @foreach ($chart['dots'] as $dot)
+                        {{-- Linha guia e ponto em destaque ao passar o mouse --}}
+                        <line
+                            x1="{{ $dot['x'] }}" x2="{{ $dot['x'] }}" y1="{{ $chart['top'] }}" y2="{{ $chart['bottom'] }}"
+                            stroke="#f2a900" stroke-opacity="0.4" stroke-dasharray="3 3"
+                            style="display: none" x-show="active === {{ $dot['i'] }}"
+                        />
+                        <circle
+                            cx="{{ $dot['x'] }}" cy="{{ $dot['y'] }}"
+                            fill="#f2a900" stroke="#1f1f1f" stroke-width="2"
+                            r="{{ $loop->last ? 5 : 3.5 }}"
+                            x-bind:r="active === {{ $dot['i'] }} ? 7 : {{ $loop->last ? 5 : 3.5 }}"
+                        />
+                    @endforeach
+
+                    {{-- Meses do ano no eixo horizontal --}}
+                    @foreach ($chart['months'] as $month)
+                        <text x="{{ $month['x'] }}" y="{{ $chart['bottom'] + 20 }}" text-anchor="middle" fill="#a1a1aa" font-size="12">{{ $month['label'] }}</text>
+                    @endforeach
+
+                    {{-- Áreas sensíveis ao mouse (uma faixa por mês) --}}
+                    @php
+                        $band = ($chart['width'] - $chart['left'] - $chart['right']) / (count($chart['months']) - 1);
+                    @endphp
+                    @foreach ($chart['months'] as $month)
+                        <rect
+                            x="{{ $month['x'] - $band / 2 }}" y="{{ $chart['top'] }}"
+                            width="{{ $band }}" height="{{ $chart['bottom'] - $chart['top'] + 24 }}"
+                            fill="transparent" data-test="chart-hover-{{ $loop->index }}"
+                            x-on:mouseenter="active = {{ $loop->index }}"
+                            x-on:touchstart.passive="active = {{ $loop->index }}"
+                        />
+                    @endforeach
+
+                    {{-- Balão com o valor do ponto --}}
+                    @foreach ($chart['dots'] as $dot)
+                        @php
+                            $tipW = 136;
+                            $tipH = 44;
+                            $tipX = max(4, min($dot['x'] - $tipW / 2, $chart['width'] - $tipW - 4));
+                            $tipY = $dot['y'] - $tipH - 12 < 2 ? $dot['y'] + 14 : $dot['y'] - $tipH - 12;
+                        @endphp
+                        <g style="display: none" x-show="active === {{ $dot['i'] }}" pointer-events="none" data-test="chart-tooltip-{{ $dot['i'] }}">
+                            <rect x="{{ $tipX }}" y="{{ $tipY }}" width="{{ $tipW }}" height="{{ $tipH }}" rx="6" fill="#27272a" stroke="#3f3f46" />
+                            <text x="{{ $tipX + $tipW / 2 }}" y="{{ $tipY + 17 }}" text-anchor="middle" fill="#a1a1aa" font-size="11">{{ $dot['full'] }}</text>
+                            <text x="{{ $tipX + $tipW / 2 }}" y="{{ $tipY + 35 }}" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="600">{{ $dot['text'] }}</text>
+                        </g>
+                    @endforeach
+                </svg>
+            </div>
+
             {{-- Gastos por categoria --}}
             <div class="flex min-h-0 flex-col rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
                 <div class="flex items-baseline justify-between gap-2">
@@ -369,44 +476,6 @@ new #[Title('Dashboard')] class extends Component {
                         </ul>
                     </div>
                 @endif
-            </div>
-
-            {{-- Evolução do saldo --}}
-            <div class="flex min-h-0 flex-col rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-                @php
-                    $chart = $this->chart;
-                @endphp
-
-                <div class="flex items-baseline justify-between gap-2">
-                    <flux:heading>{{ __('Balance evolution') }}</flux:heading>
-                    <span class="text-xs text-zinc-500">
-                        {{ __('Now') }}: <span class="font-medium text-white">{{ Money::format(end($chart['dots'])['value']) }}</span>
-                    </span>
-                </div>
-                <div class="text-xs text-zinc-500">{{ __('Total balance at the end of each of the last 6 months') }}</div>
-
-                <svg viewBox="0 0 {{ $chart['width'] }} {{ $chart['height'] + 24 }}" class="mt-2 min-h-0 w-full flex-1" role="img" aria-label="{{ __('Balance evolution') }}">
-                    <defs>
-                        <linearGradient id="balance-fill" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stop-color="#f2a900" stop-opacity="0.35" />
-                            <stop offset="100%" stop-color="#f2a900" stop-opacity="0" />
-                        </linearGradient>
-                    </defs>
-
-                    @if ($chart['zeroY'] !== null)
-                        <line x1="0" x2="{{ $chart['width'] }}" y1="{{ $chart['zeroY'] }}" y2="{{ $chart['zeroY'] }}" stroke="#52525b" stroke-dasharray="4 4" />
-                    @endif
-
-                    <path d="{{ $chart['area'] }}" fill="url(#balance-fill)" />
-                    <polyline points="{{ $chart['line'] }}" fill="none" stroke="#f2a900" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
-
-                    @foreach ($chart['dots'] as $dot)
-                        <circle cx="{{ $dot['x'] }}" cy="{{ $dot['y'] }}" r="{{ $loop->last ? 5 : 3.5 }}" fill="#f2a900" stroke="#1f1f1f" stroke-width="2">
-                            <title>{{ $dot['label'] }}: {{ Money::format($dot['value']) }}</title>
-                        </circle>
-                        <text x="{{ $dot['x'] }}" y="{{ $chart['height'] + 16 }}" text-anchor="middle" fill="#a1a1aa" font-size="12">{{ $dot['label'] }}</text>
-                    @endforeach
-                </svg>
             </div>
 
             {{-- Cartões --}}

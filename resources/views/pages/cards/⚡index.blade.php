@@ -161,6 +161,13 @@ new #[Title('Cards')] class extends Component {
         $card = $this->activeCard;
         $invoice = $this->invoice;
 
+        if ($this->locked) {
+            Flux::modal('confirm-invoice-payment')->close();
+            Flux::toast(variant: 'danger', text: __('This item is locked by your plan.'));
+
+            return;
+        }
+
         if (! $card || ! $invoice || $invoice['remaining'] <= 0) {
             Flux::modal('confirm-invoice-payment')->close();
             Flux::toast(variant: 'danger', text: __('This invoice cannot be paid.'));
@@ -269,8 +276,30 @@ new #[Title('Cards')] class extends Component {
         return Auth::user()->accounts()->orderBy('name')->get();
     }
 
+    /** O item em destaque passa do limite do plano e está bloqueado? */
+    #[Computed]
+    public function locked(): bool
+    {
+        return \App\Support\PlanLimits::isLocked(Auth::user(), $this->activeCard);
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    #[Computed]
+    public function lockedIds(): array
+    {
+        return \App\Support\PlanLimits::lockedIds(Auth::user(), 'cards');
+    }
+
     public function create(): void
     {
+        if (\App\Support\PlanLimits::reached(Auth::user(), 'cards')) {
+            Flux::toast(variant: 'danger', text: __('You reached the Free plan limit of :limit :items. Subscribe to Premium to add more.', ['limit' => \App\Support\PlanLimits::limit(Auth::user(), 'cards'), 'items' => __('cards')]));
+
+            return;
+        }
+
         $this->resetValidation();
         $this->reset('editingId', 'name', 'accountId', 'closingDay', 'dueDay');
         $this->type = 'credit';
@@ -282,6 +311,13 @@ new #[Title('Cards')] class extends Component {
     public function edit(int $id): void
     {
         $card = Auth::user()->cards()->findOrFail($id);
+
+        if (\App\Support\PlanLimits::isLocked(Auth::user(), $card)) {
+            Flux::toast(variant: 'danger', text: __('This item is locked by your plan.'));
+
+            return;
+        }
+
 
         $this->resetValidation();
         $this->editingId = $card->id;
@@ -297,6 +333,22 @@ new #[Title('Cards')] class extends Component {
 
     public function save(): void
     {
+        if (! $this->editingId) {
+        if (\App\Support\PlanLimits::reached(Auth::user(), 'cards')) {
+            Flux::toast(variant: 'danger', text: __('You reached the Free plan limit of :limit :items. Subscribe to Premium to add more.', ['limit' => \App\Support\PlanLimits::limit(Auth::user(), 'cards'), 'items' => __('cards')]));
+
+            return;
+        }
+
+        } else {
+        if (\App\Support\PlanLimits::isLocked(Auth::user(), Auth::user()->cards()->findOrFail($this->editingId))) {
+            Flux::toast(variant: 'danger', text: __('This item is locked by your plan.'));
+
+            return;
+        }
+
+        }
+
         $this->name = trim($this->name);
         $this->creditLimit = trim($this->creditLimit);
         $isCredit = $this->type === CardType::Credit->value;
@@ -427,7 +479,7 @@ new #[Title('Cards')] class extends Component {
         @endphp
 
         <x-switcher
-            :items="$this->cards->map(fn ($c) => ['id' => $c->id, 'name' => $c->name, 'dot' => $c->account->color->solid()])->all()"
+            :items="$this->cards->map(fn ($c) => ['id' => $c->id, 'name' => $c->name, 'dot' => $c->account->color->solid(), 'locked' => in_array($c->id, $this->lockedIds, true)])->all()"
             :active-id="$card->id"
         />
 
@@ -443,8 +495,12 @@ new #[Title('Cards')] class extends Component {
             <div
                 wire:key="card-hero-{{ $card->id }}"
                 wire:transition
-                class="grid min-w-0 flex-1 items-center gap-8 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 lg:grid-cols-[19rem_1fr]"
+                class="relative grid min-w-0 flex-1 items-center gap-8 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 lg:grid-cols-[19rem_1fr]"
             >
+                @if ($this->locked)
+                    <x-plan-lock :delete-id="$card->id" />
+                @endif
+
                 {{-- Cartão desenhado --}}
                 <div class="relative aspect-[1.586] w-full max-w-[19rem] overflow-hidden rounded-2xl bg-gradient-to-br p-5 text-white shadow-xl {{ $color->gradient() }}">
                     <div class="pointer-events-none absolute -right-10 -top-10 size-44 rounded-full bg-white/10"></div>
@@ -545,6 +601,7 @@ new #[Title('Cards')] class extends Component {
             />
         </div>
 
+        @unless ($this->locked)
         <x-transactions-panel
             :transactions="$this->transactions"
             :month-label="$this->monthLabel"
@@ -552,6 +609,7 @@ new #[Title('Cards')] class extends Component {
             :payments="$invoice ? $invoice['payments'] : collect()"
             :recurring-count="$this->recurringTransactions->count()"
         />
+        @endunless
     @endif
 
     <x-transaction-modals

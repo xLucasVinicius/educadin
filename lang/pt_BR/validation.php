@@ -191,6 +191,8 @@ return [
         'description' => 'descrição',
         'amount' => 'valor',
         'recurringAmount' => 'valor',
+        'plan' => 'plano',
+        'premiumUntil' => 'vencimento',
         'date' => 'data',
         'category' => 'categoria',
         'croppedPhoto' => 'foto',

@@ -55,6 +55,22 @@ new #[Title('Accounts')] class extends Component {
         return Auth::user()->accounts()->withBalance()->orderBy('name')->get();
     }
 
+    /** O item em destaque passa do limite do plano e está bloqueado? */
+    #[Computed]
+    public function locked(): bool
+    {
+        return \App\Support\PlanLimits::isLocked(Auth::user(), $this->activeAccount);
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    #[Computed]
+    public function lockedIds(): array
+    {
+        return \App\Support\PlanLimits::lockedIds(Auth::user(), 'accounts');
+    }
+
     #[Computed]
     public function activeAccount(): ?Account
     {
@@ -127,6 +143,13 @@ new #[Title('Accounts')] class extends Component {
     {
         abort_unless($this->activeAccount && $this->accounts->count() > 1, 404);
 
+        if (\App\Support\PlanLimits::isLocked(Auth::user(), $this->activeAccount)) {
+            Flux::toast(variant: 'danger', text: __('This item is locked by your plan.'));
+
+            return;
+        }
+
+
         $this->resetValidation();
         $this->reset('transferTo', 'transferDescription');
         $this->transferAmount = '0,00';
@@ -139,6 +162,12 @@ new #[Title('Accounts')] class extends Component {
     {
         $account = $this->activeAccount;
         abort_unless($account, 404);
+
+        if (\App\Support\PlanLimits::isLocked(Auth::user(), $account)) {
+            Flux::toast(variant: 'danger', text: __('This item is locked by your plan.'));
+
+            return;
+        }
 
         $this->transferAmount = trim($this->transferAmount);
         $this->transferDescription = trim($this->transferDescription);
@@ -261,6 +290,12 @@ new #[Title('Accounts')] class extends Component {
 
     public function create(): void
     {
+        if (\App\Support\PlanLimits::reached(Auth::user(), 'accounts')) {
+            Flux::toast(variant: 'danger', text: __('You reached the Free plan limit of :limit :items. Subscribe to Premium to add more.', ['limit' => \App\Support\PlanLimits::limit(Auth::user(), 'accounts'), 'items' => __('accounts')]));
+
+            return;
+        }
+
         $this->resetValidation();
         $this->reset('editingId', 'name', 'type');
         $this->color = 'amber';
@@ -272,6 +307,13 @@ new #[Title('Accounts')] class extends Component {
     public function edit(int $id): void
     {
         $account = Auth::user()->accounts()->findOrFail($id);
+
+        if (\App\Support\PlanLimits::isLocked(Auth::user(), $account)) {
+            Flux::toast(variant: 'danger', text: __('This item is locked by your plan.'));
+
+            return;
+        }
+
 
         $this->resetValidation();
         $this->editingId = $account->id;
@@ -285,6 +327,22 @@ new #[Title('Accounts')] class extends Component {
 
     public function save(): void
     {
+        if (! $this->editingId) {
+        if (\App\Support\PlanLimits::reached(Auth::user(), 'accounts')) {
+            Flux::toast(variant: 'danger', text: __('You reached the Free plan limit of :limit :items. Subscribe to Premium to add more.', ['limit' => \App\Support\PlanLimits::limit(Auth::user(), 'accounts'), 'items' => __('accounts')]));
+
+            return;
+        }
+
+        } else {
+        if (\App\Support\PlanLimits::isLocked(Auth::user(), Auth::user()->accounts()->findOrFail($this->editingId))) {
+            Flux::toast(variant: 'danger', text: __('This item is locked by your plan.'));
+
+            return;
+        }
+
+        }
+
         $this->name = trim($this->name);
         $this->initialBalance = trim($this->initialBalance);
 
@@ -393,7 +451,7 @@ new #[Title('Accounts')] class extends Component {
         @endphp
 
         <x-switcher
-            :items="$this->accounts->map(fn ($a) => ['id' => $a->id, 'name' => $a->name, 'dot' => $a->color->solid()])->all()"
+            :items="$this->accounts->map(fn ($a) => ['id' => $a->id, 'name' => $a->name, 'dot' => $a->color->solid(), 'locked' => in_array($a->id, $this->lockedIds, true)])->all()"
             :active-id="$account->id"
         />
 
@@ -411,6 +469,10 @@ new #[Title('Accounts')] class extends Component {
                 wire:transition
                 class="relative min-w-0 flex-1 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
             >
+                @if ($this->locked)
+                    <x-plan-lock :delete-id="$account->id" />
+                @endif
+
                 <div class="pointer-events-none absolute -right-16 -top-16 size-64 rounded-full blur-3xl {{ $account->color->glow() }}"></div>
 
                 <div class="relative flex flex-wrap items-center gap-6">
@@ -478,6 +540,7 @@ new #[Title('Accounts')] class extends Component {
             />
         </div>
 
+        @unless ($this->locked)
         <x-transactions-panel
             :transactions="$this->transactions"
             :month-label="$this->monthLabel"
@@ -486,6 +549,7 @@ new #[Title('Accounts')] class extends Component {
             :can-transfer="$this->accounts->count() > 1"
             :recurring-count="$this->recurringTransactions->count()"
         />
+        @endunless
     @endif
 
     <x-transaction-modals

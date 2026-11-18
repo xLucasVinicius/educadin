@@ -25,7 +25,7 @@
             <div x-show="! $wire.repeatMonthly">
             <flux:select wire:model="installments" :label="__('Installments')" :description="__('The total is split into monthly installments, one per invoice.')">
                 <flux:select.option value="1">{{ __('Single payment') }}</flux:select.option>
-                @for ($n = 2; $n <= 24; $n++)
+                @for ($n = 2; $n <= \App\Support\PlanLimits::installmentsMax(auth()->user()); $n++)
                     <flux:select.option value="{{ $n }}">{{ $n }}x</flux:select.option>
                 @endfor
             </flux:select>

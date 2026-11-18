@@ -5,6 +5,7 @@ use App\Models\Card;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Support\Money;
+use Carbon\CarbonImmutable;
 use Livewire\Livewire;
 
 function dashDay(int $offset = 0, int $monthsBack = 0): string
@@ -33,7 +34,7 @@ test('total balance sums every account including transactions', function () {
     $component->assertSee(Money::format(170000), false);
 });
 
-test('month totals count only accounts of the selected month', function () {
+test('month totals count only accounts of the current month', function () {
     $user = User::factory()->create();
     $account = Account::factory()->for($user)->create();
     $card = Card::factory()->for($user)->create(['account_id' => $account->id]);
@@ -46,10 +47,6 @@ test('month totals count only accounts of the selected month', function () {
     $component = Livewire::test('pages::dashboard');
 
     expect($component->instance()->monthTotals)->toBe(['income' => 50000, 'expense' => 20000]);
-
-    $component->call('previousMonth');
-
-    expect($component->instance()->monthTotals)->toBe(['income' => 0, 'expense' => 77777]);
 });
 
 test('spending by category includes accounts and cards and adds up to 100 percent', function () {
@@ -89,30 +86,39 @@ test('categories beyond the sixth are grouped as others', function () {
         ->and($slices[6]['amount'])->toBe((10000 - 6 * 100) + (10000 - 7 * 100));
 });
 
-test('balance series shows the end of month balance for the last 6 months', function () {
+test('balance series covers every month of the year and leaves future months empty', function () {
+    $this->travelTo('2026-11-17 12:00:00');
+
     $user = User::factory()->create();
     $account = Account::factory()->for($user)->create(['initial_balance' => 100000]);
-    Transaction::factory()->forAccount($account)->create(['amount' => 20000, 'date' => dashDay(1, 1)]);
-    Transaction::factory()->forAccount($account)->income()->create(['amount' => 50000, 'date' => dashDay(1)]);
-    Transaction::factory()->forAccount($account)->create(['amount' => 5000, 'date' => dashDay(1, 8)]);
+    // Do ano anterior: já entra no ponto de partida (100000 - 7000).
+    Transaction::factory()->forAccount($account)->create(['amount' => 7000, 'date' => '2025-12-20']);
+    Transaction::factory()->forAccount($account)->create(['amount' => 5000, 'date' => '2026-03-10']);
+    Transaction::factory()->forAccount($account)->create(['amount' => 20000, 'date' => '2026-10-05']);
+    Transaction::factory()->forAccount($account)->income()->create(['amount' => 50000, 'date' => '2026-11-02']);
     $this->actingAs($user);
 
     $series = Livewire::test('pages::dashboard')->instance()->balanceSeries;
-    $values = array_column($series, 'value');
 
-    // Compra antiga (8 meses atrás) já entra no ponto de partida: 100000 - 5000.
-    expect($series)->toHaveCount(6)
-        ->and($values)->toBe([95000, 95000, 95000, 95000, 75000, 125000]);
+    expect($series)->toHaveCount(12)
+        ->and($series[0]['label'])->toBe(ucfirst(CarbonImmutable::parse('2026-01-01')->locale(app()->getLocale())->translatedFormat('M')))
+        ->and($series[11]['label'])->toBe(ucfirst(CarbonImmutable::parse('2026-12-01')->locale(app()->getLocale())->translatedFormat('M')))
+        ->and(array_column($series, 'value'))->toBe([
+            93000, 93000, 88000, 88000, 88000, 88000, 88000, 88000, 88000, 68000, 118000, null,
+        ]);
 });
 
-test('chart geometry is built for the series', function () {
+test('chart geometry is built for the months that already happened', function () {
+    $this->travelTo('2026-11-17 12:00:00');
+
     $user = User::factory()->create();
     Account::factory()->for($user)->create(['initial_balance' => 100000]);
     $this->actingAs($user);
 
     $chart = Livewire::test('pages::dashboard')->instance()->chart;
 
-    expect($chart['dots'])->toHaveCount(6)
+    expect($chart['months'])->toHaveCount(12)
+        ->and($chart['dots'])->toHaveCount(11)
         ->and($chart['line'])->not->toBeEmpty()
         ->and($chart['area'])->toStartWith('M ');
 });
@@ -144,18 +150,16 @@ test('latest transactions list only the user own records', function () {
         ->assertDontSee('Lancamento alheio');
 });
 
-test('month can be navigated', function () {
+test('the dashboard has no month navigation and always shows the current month', function () {
     $user = User::factory()->create();
     Account::factory()->for($user)->create();
     $this->actingAs($user);
 
-    $current = Livewire::test('pages::dashboard')->instance()->monthLabel;
+    $component = Livewire::test('pages::dashboard');
 
-    $component = Livewire::test('pages::dashboard')->call('previousMonth');
+    $component->assertDontSee('wire:click="previousMonth"', false)
+        ->assertDontSee('wire:click="nextMonth"', false)
+        ->assertSee('data-test="current-month"', false);
 
-    expect($component->instance()->monthLabel)->not->toBe($current);
-
-    $component->call('nextMonth');
-
-    expect($component->instance()->monthLabel)->toBe($current);
+    expect($component->instance()->monthLabel)->toBe(\Illuminate\Support\Str::ucfirst(now()->locale(app()->getLocale())->translatedFormat('F \d\e Y')));
 });

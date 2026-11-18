@@ -23,10 +23,25 @@
                     {{ __('Cards') }}
                 </flux:sidebar.item>
 
-                {{-- Próximas telas: Lançamentos e Desempenho --}}
+                <flux:sidebar.item icon="chart-bar" :href="route('performance.index')" :current="request()->routeIs('performance.*')" wire:navigate data-test="performance-link">
+                    {{ __('Performance') }}
+                </flux:sidebar.item>
+
+                <flux:sidebar.item icon="banknotes" :href="route('plans.index')" :current="request()->routeIs('plans.*')" wire:navigate data-test="plans-link">
+                    {{ __('Plans') }}
+                </flux:sidebar.item>
+
             </flux:sidebar.nav>
 
             <flux:spacer />
+
+            @if (auth()->user()->isAdmin())
+                <flux:sidebar.nav>
+                    <flux:sidebar.item icon="shield-check" :href="route('admin.index')" :current="request()->routeIs('admin.*')" wire:navigate data-test="admin-link">
+                        {{ __('Admin') }}
+                    </flux:sidebar.item>
+                </flux:sidebar.nav>
+            @endif
 
             <x-desktop-user-menu class="hidden lg:block" :name="auth()->user()->name" />
         </flux:sidebar>
@@ -71,20 +86,7 @@
                         </flux:menu.item>
                     </flux:menu.radio.group>
 
-                    <flux:menu.separator />
-
-                    <form method="POST" action="{{ route('logout') }}" class="w-full">
-                        @csrf
-                        <flux:menu.item
-                            as="button"
-                            type="submit"
-                            icon="arrow-right-start-on-rectangle"
-                            class="w-full cursor-pointer"
-                            data-test="logout-button"
-                        >
-                            {{ __('Log out') }}
-                        </flux:menu.item>
-                    </form>
+                    <x-linked-accounts-menu />
                 </flux:menu>
             </flux:dropdown>
         </flux:header>
