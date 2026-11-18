@@ -484,6 +484,7 @@ new #[Title('Accounts')] class extends Component {
             :transfers="$this->transfers"
             :account-id="$account->id"
             :can-transfer="$this->accounts->count() > 1"
+            :recurring-count="$this->recurringTransactions->count()"
         />
     @endif
 
@@ -491,6 +492,9 @@ new #[Title('Accounts')] class extends Component {
         :allow-income="true"
         :categories="$this->categoryOptions"
         :editing="(bool) $editingTransactionId"
+        :recurring="$this->recurringTransactions"
+        :cancelling-recurring="$this->cancellingRecurring"
+        :editing-recurring="$this->editingRecurring"
     />
 
     @if ($this->activeAccount)

@@ -56,6 +56,11 @@ class Account extends Model
         return $this->hasMany(Transaction::class);
     }
 
+    public function recurringTransactions(): HasMany
+    {
+        return $this->hasMany(RecurringTransaction::class);
+    }
+
     public function transfersOut(): HasMany
     {
         return $this->hasMany(Transfer::class, 'from_account_id');

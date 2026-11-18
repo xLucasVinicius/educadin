@@ -20,9 +20,13 @@ use Illuminate\Support\Carbon;
  * @property string $description
  * @property int $amount Valor em centavos, sempre positivo.
  * @property Carbon $date
+ * @property string|null $installment_group Liga as parcelas de uma mesma compra.
+ * @property int|null $installment_number Parcela atual (1, 2, ...).
+ * @property int|null $installment_total Total de parcelas da compra.
+ * @property int|null $recurring_transaction_id Recorrência que gerou o lançamento.
  * @property TransactionCategory $category
  */
-#[Fillable(['user_id', 'account_id', 'card_id', 'type', 'description', 'amount', 'date', 'category'])]
+#[Fillable(['user_id', 'account_id', 'card_id', 'type', 'description', 'amount', 'date', 'category', 'installment_group', 'installment_number', 'installment_total', 'recurring_transaction_id'])]
 class Transaction extends Model
 {
     /** @use HasFactory<TransactionFactory> */
@@ -38,6 +42,8 @@ class Transaction extends Model
             'category' => TransactionCategory::class,
             'amount' => 'integer',
             'date' => 'immutable_date:Y-m-d',
+            'installment_number' => 'integer',
+            'installment_total' => 'integer',
         ];
     }
 
@@ -54,6 +60,16 @@ class Transaction extends Model
     public function card(): BelongsTo
     {
         return $this->belongsTo(Card::class);
+    }
+
+    public function isRecurring(): bool
+    {
+        return $this->recurring_transaction_id !== null;
+    }
+
+    public function isInstallment(): bool
+    {
+        return $this->installment_group !== null;
     }
 
     public function isIncome(): bool

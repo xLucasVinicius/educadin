@@ -1,4 +1,4 @@
-@props(['transactions', 'monthLabel', 'period' => null, 'payments' => null, 'transfers' => null, 'accountId' => null, 'canTransfer' => false])
+@props(['transactions', 'monthLabel', 'period' => null, 'payments' => null, 'transfers' => null, 'accountId' => null, 'canTransfer' => false, 'recurringCount' => 0])
 
 @php
     // Pagamentos de fatura aparecem junto dos lançamentos do cartão, em ordem de data.
@@ -26,6 +26,12 @@
                 <span class="min-w-36 px-1 text-center text-sm font-medium">{{ $monthLabel }}</span>
                 <flux:button variant="ghost" size="sm" icon="chevron-right" wire:click="nextMonth" :aria-label="__('Next month')" />
             </div>
+
+            <flux:modal.trigger name="recurring-list">
+                <flux:button variant="filled" size="sm" icon="arrow-path" data-test="recurring-button">
+                    {{ __('Recurring') }}@if ($recurringCount > 0) ({{ $recurringCount }})@endif
+                </flux:button>
+            </flux:modal.trigger>
 
             @if ($canTransfer)
                 <flux:button variant="filled" size="sm" icon="arrows-right-left" wire:click="createTransfer" data-test="new-transfer-button">
@@ -136,7 +142,15 @@
                     </div>
 
                     <div class="min-w-0 flex-1">
-                        <div class="truncate font-medium text-white">{{ $transaction->description }}</div>
+                        <div class="flex items-center gap-2">
+                            <span class="truncate font-medium text-white">{{ $transaction->description }}</span>
+                            @if ($transaction->isRecurring())
+                                <flux:icon.arrow-path class="size-4 shrink-0 text-zinc-400" :title="__('Recurring')" />
+                            @endif
+                            @if ($transaction->isInstallment())
+                                <span class="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-300">{{ $transaction->installment_number }}/{{ $transaction->installment_total }}</span>
+                            @endif
+                        </div>
                         <div class="text-sm text-zinc-400">
                             {{ $transaction->date->format('d/m/Y') }} · {{ $transaction->category->label() }}
                         </div>

@@ -8,7 +8,10 @@ use Carbon\CarbonImmutable;
 use Flux\Flux;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Model;
+use App\Models\RecurringTransaction;
+use App\Models\Transaction;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -39,6 +42,21 @@ trait ManagesTransactions
 
     public string $category = '';
 
+    /** Número de parcelas da compra (só cartão de crédito, só ao criar). */
+    public int $installments = 1;
+
+    /** Repetir o lançamento todo mês (só ao criar). */
+    public bool $repeatMonthly = false;
+
+    public ?int $cancellingRecurringId = null;
+
+    public ?int $editingRecurringId = null;
+
+    public string $recurringAmount = '0,00';
+
+    /** Ao excluir uma parcela: "one", "following" (esta e as próximas) ou "all". */
+    public string $deleteScope = 'one';
+
     /** Conta ou cartão atualmente em destaque (o "dono" dos lançamentos). */
     abstract protected function transactionOwner(): ?Model;
 
@@ -47,6 +65,12 @@ trait ManagesTransactions
 
     /** Limpa os caches de computed da própria tela após mudar lançamentos. */
     abstract protected function forgetOwnerCaches(): void;
+
+    /** Se a tela permite dividir a compra em parcelas (cartão de crédito). */
+    protected function allowsInstallments(): bool
+    {
+        return false;
+    }
 
     /** Mês exibido quando nenhum foi escolhido (cartão de crédito: fatura aberta). */
     protected function defaultMonthStart(): CarbonImmutable
@@ -106,6 +130,51 @@ trait ManagesTransactions
             ->get();
     }
 
+    /** Lançamento que está para ser excluído (para saber se é uma parcela). */
+    #[Computed]
+    public function deletingTransaction(): ?Transaction
+    {
+        return $this->deletingTransactionId
+            ? $this->transactionOwner()?->transactions()->find($this->deletingTransactionId)
+            : null;
+    }
+
+    /**
+     * Recorrências ativas do item em destaque.
+     *
+     * @return Collection<int, RecurringTransaction>
+     */
+    #[Computed]
+    public function recurringTransactions(): Collection
+    {
+        $owner = $this->transactionOwner();
+
+        if (! $owner) {
+            return new Collection;
+        }
+
+        return $owner->recurringTransactions()
+            ->whereNull('cancelled_at')
+            ->orderBy('description')
+            ->get();
+    }
+
+    #[Computed]
+    public function cancellingRecurring(): ?RecurringTransaction
+    {
+        return $this->cancellingRecurringId
+            ? $this->transactionOwner()?->recurringTransactions()->whereNull('cancelled_at')->find($this->cancellingRecurringId)
+            : null;
+    }
+
+    #[Computed]
+    public function editingRecurring(): ?RecurringTransaction
+    {
+        return $this->editingRecurringId
+            ? $this->transactionOwner()?->recurringTransactions()->whereNull('cancelled_at')->find($this->editingRecurringId)
+            : null;
+    }
+
     /**
      * @return array{income: int, expense: int}
      */
@@ -150,6 +219,8 @@ trait ManagesTransactions
 
         $this->resetValidation();
         $this->reset('editingTransactionId', 'description', 'category');
+        $this->installments = 1;
+        $this->repeatMonthly = false;
         $this->kind = 'expense';
         $this->amount = '0,00';
         $this->date = now()->toDateString();
@@ -194,7 +265,12 @@ trait ManagesTransactions
         $this->amount = trim($this->amount);
         $type = TransactionType::tryFrom($this->kind) ?? TransactionType::Expense;
 
+        $repeats = $this->repeatMonthly && ! $this->editingTransactionId;
+        $usesInstallments = $this->allowsInstallments() && ! $this->editingTransactionId && ! $repeats;
+        $count = $usesInstallments ? $this->installments : 1;
+
         $validated = $this->validate([
+            'installments' => $usesInstallments ? ['required', 'integer', 'between:1,24'] : ['nullable'],
             'kind' => ['required', Rule::enum(TransactionType::class)],
             'description' => ['required', 'string', 'max:150'],
             'amount' => [
@@ -218,11 +294,19 @@ trait ManagesTransactions
             'amount.regex' => __('The :attribute must be a valid amount, e.g. 1.234,56.'),
         ]);
 
+        $totalCents = $this->parseAmountToCents($validated['amount']);
+
+        if ($count > 1 && $totalCents < $count) {
+            $this->addError('amount', __('The amount is too small for this number of installments.'));
+
+            return;
+        }
+
         $data = [
             'user_id' => Auth::id(),
             'type' => $validated['kind'],
             'description' => $validated['description'],
-            'amount' => $this->parseAmountToCents($validated['amount']),
+            'amount' => $totalCents,
             'date' => $validated['date'],
             'category' => $validated['category'],
         ];
@@ -230,6 +314,20 @@ trait ManagesTransactions
         if ($this->editingTransactionId) {
             $owner->transactions()->findOrFail($this->editingTransactionId)->update(Arr::except($data, 'user_id'));
             $message = __('Transaction updated.');
+        } elseif ($repeats) {
+            $recurring = $owner->recurringTransactions()->create([
+                ...Arr::except($data, ['date']),
+                'day_of_month' => (int) substr($data['date'], 8, 2),
+                'next_due_on' => $data['date'],
+            ]);
+            $recurring->generateDue();
+
+            $message = $recurring->next_due_on->isFuture()
+                ? __('Recurring transaction created. The first one will be posted on :date.', ['date' => $recurring->next_due_on->format('d/m/Y')])
+                : __('Recurring transaction created.');
+        } elseif ($count > 1) {
+            $this->createInstallments($owner, $data, $count);
+            $message = __('Purchase split into :count installments.', ['count' => $count]);
         } else {
             $owner->transactions()->create($data);
             $message = __('Transaction created.');
@@ -249,6 +347,8 @@ trait ManagesTransactions
         abort_unless($owner, 404);
 
         $this->deletingTransactionId = $owner->transactions()->findOrFail($id)->id;
+        $this->deleteScope = 'one';
+        unset($this->deletingTransaction);
 
         Flux::modal('confirm-transaction-deletion')->show();
     }
@@ -258,18 +358,140 @@ trait ManagesTransactions
         $owner = $this->transactionOwner();
         abort_unless($owner, 404);
 
-        $owner->transactions()->findOrFail($this->deletingTransactionId)->delete();
+        $transaction = $owner->transactions()->findOrFail($this->deletingTransactionId);
+
+        if ($transaction->isInstallment() && $this->deleteScope === 'all') {
+            $owner->transactions()->where('installment_group', $transaction->installment_group)->delete();
+        } elseif ($transaction->isInstallment() && $this->deleteScope === 'following') {
+            $owner->transactions()
+                ->where('installment_group', $transaction->installment_group)
+                ->where('installment_number', '>=', $transaction->installment_number)
+                ->delete();
+        } else {
+            $transaction->delete();
+        }
 
         $this->deletingTransactionId = null;
+        $this->deleteScope = 'one';
         $this->forgetTransactionCaches();
 
         Flux::modal('confirm-transaction-deletion')->close();
         Flux::toast(variant: 'success', text: __('Transaction deleted.'));
     }
 
+    public function editRecurring(int $id): void
+    {
+        $owner = $this->transactionOwner();
+        abort_unless($owner, 404);
+
+        $recurring = $owner->recurringTransactions()->whereNull('cancelled_at')->findOrFail($id);
+
+        $this->resetValidation();
+        $this->editingRecurringId = $recurring->id;
+        $this->recurringAmount = number_format($recurring->amount / 100, 2, ',', '.');
+        unset($this->editingRecurring);
+
+        Flux::modal('recurring-list')->close();
+        Flux::modal('recurring-edit')->show();
+    }
+
+    /** Muda o valor das próximas ocorrências; o que já foi lançado não muda. */
+    public function saveRecurring(): void
+    {
+        $owner = $this->transactionOwner();
+        abort_unless($owner, 404);
+
+        $recurring = $owner->recurringTransactions()->whereNull('cancelled_at')->findOrFail($this->editingRecurringId);
+
+        $this->recurringAmount = trim($this->recurringAmount);
+
+        $this->validate([
+            'recurringAmount' => [
+                'bail',
+                'required',
+                'regex:'.$this->moneyPattern(allowNegative: false),
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if ($this->parseAmountToCents((string) $value) <= 0) {
+                        $fail(__('The :attribute must be greater than zero.', [
+                            'attribute' => __('validation.attributes.amount'),
+                        ]));
+                    }
+                },
+            ],
+        ], [
+            'recurringAmount.regex' => __('The :attribute must be a valid amount, e.g. 1.234,56.'),
+        ]);
+
+        // O que já venceu é lançado com o valor antigo antes da mudança.
+        $recurring->generateDue();
+        $recurring->update(['amount' => $this->parseAmountToCents($this->recurringAmount)]);
+
+        $this->editingRecurringId = null;
+        $this->forgetTransactionCaches();
+
+        Flux::modal('recurring-edit')->close();
+        Flux::toast(variant: 'success', text: __('Recurring transaction updated. The new amount applies to the next months.'));
+    }
+
+    public function confirmCancelRecurring(int $id): void
+    {
+        $owner = $this->transactionOwner();
+        abort_unless($owner, 404);
+
+        $this->cancellingRecurringId = $owner->recurringTransactions()->whereNull('cancelled_at')->findOrFail($id)->id;
+        unset($this->cancellingRecurring);
+
+        Flux::modal('recurring-list')->close();
+        Flux::modal('confirm-recurring-cancel')->show();
+    }
+
+    public function cancelRecurring(): void
+    {
+        $owner = $this->transactionOwner();
+        abort_unless($owner, 404);
+
+        $owner->recurringTransactions()
+            ->whereNull('cancelled_at')
+            ->findOrFail($this->cancellingRecurringId)
+            ->cancel();
+
+        $this->cancellingRecurringId = null;
+        $this->forgetTransactionCaches();
+
+        Flux::modal('confirm-recurring-cancel')->close();
+        Flux::toast(variant: 'success', text: __('Recurring transaction cancelled.'));
+    }
+
+    /**
+     * Divide a compra em parcelas mensais. O resto da divisão (centavos) fica
+     * na primeira parcela, para a soma bater com o valor total.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function createInstallments(Model $owner, array $data, int $count): void
+    {
+        $base = intdiv($data['amount'], $count);
+        $rest = $data['amount'] - $base * $count;
+        $group = (string) Str::uuid();
+        $first = CarbonImmutable::parse($data['date']);
+
+        DB::transaction(function () use ($owner, $data, $count, $base, $rest, $group, $first): void {
+            for ($i = 0; $i < $count; $i++) {
+                $owner->transactions()->create([
+                    ...$data,
+                    'amount' => $base + ($i === 0 ? $rest : 0),
+                    'date' => $first->addMonthsNoOverflow($i)->toDateString(),
+                    'installment_group' => $group,
+                    'installment_number' => $i + 1,
+                    'installment_total' => $count,
+                ]);
+            }
+        });
+    }
+
     protected function forgetTransactionCaches(): void
     {
-        unset($this->transactions, $this->monthTotals, $this->monthLabel);
+        unset($this->transactions, $this->monthTotals, $this->monthLabel, $this->deletingTransaction, $this->recurringTransactions, $this->cancellingRecurring, $this->editingRecurring);
         $this->forgetOwnerCaches();
     }
 }

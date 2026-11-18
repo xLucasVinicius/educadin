@@ -222,6 +222,11 @@ new #[Title('Cards')] class extends Component {
         return false;
     }
 
+    protected function allowsInstallments(): bool
+    {
+        return (bool) $this->activeCard?->isCredit();
+    }
+
     protected function forgetOwnerCaches(): void
     {
         unset($this->cards, $this->activeCard, $this->invoice, $this->usedCredit);
@@ -545,13 +550,19 @@ new #[Title('Cards')] class extends Component {
             :month-label="$this->monthLabel"
             :period="$invoice ? $invoice['start']->format('d/m').' – '.$invoice['end']->format('d/m') : null"
             :payments="$invoice ? $invoice['payments'] : collect()"
+            :recurring-count="$this->recurringTransactions->count()"
         />
     @endif
 
     <x-transaction-modals
         :allow-income="false"
+        :allow-installments="(bool) $this->activeCard?->isCredit()"
+        :deleting-installment="$this->deletingTransaction?->isInstallment() ? $this->deletingTransaction : null"
         :categories="$this->categoryOptions"
         :editing="(bool) $editingTransactionId"
+        :recurring="$this->recurringTransactions"
+        :cancelling-recurring="$this->cancellingRecurring"
+        :editing-recurring="$this->editingRecurring"
     />
 
     <flux:modal name="confirm-invoice-payment" class="min-w-[22rem]">

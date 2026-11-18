@@ -11,6 +11,7 @@ use App\Models\Transfer;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Str;
 
 class DatabaseSeeder extends Seeder
 {
@@ -64,6 +65,23 @@ class DatabaseSeeder extends Seeder
             ['user_id' => $user->id, 'type' => $out, 'description' => 'Assinatura de streaming', 'amount' => 3990, 'date' => $day(2), 'category' => Cat::Leisure],
             ['user_id' => $user->id, 'type' => $out, 'description' => 'Tênis', 'amount' => 29990, 'date' => $day(3), 'category' => Cat::Shopping],
         ]);
+
+        // Compra parcelada: Fone de ouvido em 3x (uma parcela por fatura).
+        $group = (string) Str::uuid();
+        foreach ([1, 2, 3] as $number) {
+            $cards[0]->transactions()->create([
+                'user_id' => $user->id, 'type' => $out, 'description' => 'Fone de ouvido', 'amount' => 20000,
+                'date' => $start->addDays(5)->addMonthsNoOverflow($number - 1)->toDateString(), 'category' => Cat::Shopping,
+                'installment_group' => $group, 'installment_number' => $number, 'installment_total' => 3,
+            ]);
+        }
+
+        // Assinatura recorrente no cartão: lançada todo mês, a partir do dia 2 do mês atual.
+        $recurring = $cards[0]->recurringTransactions()->create([
+            'user_id' => $user->id, 'type' => $out, 'description' => 'Plano de streaming', 'amount' => 3990,
+            'category' => Cat::Leisure, 'day_of_month' => 2, 'next_due_on' => $day(1),
+        ]);
+        $recurring->generateDue();
 
         $cards[1]->transactions()->createMany([
             ['user_id' => $user->id, 'type' => $out, 'description' => 'Combustível', 'amount' => 25000, 'date' => $day(2), 'category' => Cat::Transport],

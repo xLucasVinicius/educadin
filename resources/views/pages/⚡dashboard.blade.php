@@ -262,6 +262,8 @@ new #[Title('Dashboard')] class extends Component {
     {
         return Auth::user()->transactions()
             ->with(['account', 'card'])
+            // Parcelas de meses futuros ainda não aconteceram: ficam fora dos recentes.
+            ->where(fn ($q) => $q->whereNull('installment_group')->orWhere('date', '<=', now()->toDateString()))
             ->orderByDesc('date')
             ->orderByDesc('id')
             ->limit(12)
