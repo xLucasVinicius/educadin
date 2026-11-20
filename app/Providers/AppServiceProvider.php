@@ -37,14 +37,11 @@ class AppServiceProvider extends ServiceProvider
             app()->isProduction(),
         );
 
-        Password::defaults(fn (): ?Password => app()->isProduction()
-            ? Password::min(12)
-                ->mixedCase()
-                ->letters()
-                ->numbers()
-                ->symbols()
-                ->uncompromised()
-            : null,
+        // Regra de senha única do sistema (cadastro, redefinição e troca de senha).
+        // A checagem de vazamentos consulta um serviço externo, então só roda em produção.
+        Password::defaults(fn (): Password => app()->isProduction()
+            ? Password::min(8)->mixedCase()->letters()->numbers()->symbols()->uncompromised()
+            : Password::min(8)->mixedCase()->letters()->numbers()->symbols(),
         );
     }
 }

@@ -12,7 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // Atrás de túnel/proxy (Cloudflare, Herd Share), o HTTPS chega por cabeçalho:
+        // sem isso os links e arquivos de estilo saem em http e o navegador bloqueia.
+        $middleware->trustProxies(at: '*');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

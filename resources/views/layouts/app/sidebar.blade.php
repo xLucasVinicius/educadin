@@ -47,7 +47,7 @@
         </flux:sidebar>
 
         <!-- Mobile User Menu -->
-        <flux:header class="lg:hidden">
+        <flux:header sticky class="sticky top-0 z-30 border-b border-zinc-200 bg-zinc-50 lg:hidden dark:border-white/10 dark:bg-zinc-950">
             <flux:sidebar.toggle class="lg:hidden" icon="bars-2" inset="left" />
 
             <flux:spacer />

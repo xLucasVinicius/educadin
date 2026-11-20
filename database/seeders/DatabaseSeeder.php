@@ -161,5 +161,14 @@ class DatabaseSeeder extends Seeder
         $cards[1]->transactions()->createMany([
             ['user_id' => $user->id, 'type' => $out, 'description' => 'Combustível', 'amount' => 25000, 'date' => $day(2), 'category' => Cat::Transport],
         ]);
+
+        // Perfil de teste completo: histórico de 12 meses, parcelados, recorrentes, faturas e foto.
+        (new RichTestProfileSeeder)->seed($user, $accounts, $cards);
+
+        foreach (['maria@example.com' => [120, 80, 200], 'joao@example.com' => [60, 150, 110], 'carla@example.com' => [190, 90, 120]] as $email => $rgb) {
+            if ($demo = User::where('email', $email)->first()) {
+                RichTestProfileSeeder::photo($demo, $rgb);
+            }
+        }
     }
 }

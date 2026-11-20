@@ -157,6 +157,7 @@ new #[Title('Security settings')] class extends Component {
             ]);
         } catch (ValidationException $e) {
             $this->reset('current_password', 'password', 'password_confirmation');
+            $this->dispatch('password-cleared');
 
             throw $e;
         }
@@ -166,6 +167,7 @@ new #[Title('Security settings')] class extends Component {
         ]);
 
         $this->reset('current_password', 'password', 'password_confirmation');
+        $this->dispatch('password-cleared');
 
         Flux::toast(variant: 'success', text: __('Password updated.'));
     }
@@ -269,15 +271,17 @@ new #[Title('Security settings')] class extends Component {
                 autocomplete="current-password"
                 viewable
             />
-            <flux:input
-                wire:model="password"
-                :label="__('New password')"
-                type="password"
-                required
-                autocomplete="new-password"
-                passwordrules="{{ \Illuminate\Validation\Rules\Password::defaults()->toPasswordRulesString() }}"
-                viewable
-            />
+            <x-password-requirements>
+                <flux:input
+                    wire:model="password"
+                    :label="__('New password')"
+                    type="password"
+                    required
+                    autocomplete="new-password"
+                    passwordrules="{{ \Illuminate\Validation\Rules\Password::defaults()->toPasswordRulesString() }}"
+                    viewable
+                />
+            </x-password-requirements>
             <flux:input
                 wire:model="password_confirmation"
                 :label="__('Confirm password')"

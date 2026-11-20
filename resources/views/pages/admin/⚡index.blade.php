@@ -5,6 +5,7 @@ use Flux\Flux;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Livewire\Attributes\Computed;
@@ -143,6 +144,21 @@ new #[Title('Admin')] class extends Component {
 
         $this->refreshData();
         Flux::toast(variant: 'success', text: __('Account reactivated.'));
+    }
+
+    /** Envia ao usuário o e-mail para ele mesmo criar uma nova senha (o admin nunca vê a senha). */
+    public function sendPasswordReset(int $id): void
+    {
+        $target = $this->managedTarget($id);
+
+        $status = Password::broker()->sendResetLink(['email' => $target->email]);
+
+        Flux::toast(
+            variant: $status === Password::RESET_LINK_SENT ? 'success' : 'danger',
+            text: $status === Password::RESET_LINK_SENT
+                ? __('Password reset link sent to :email.', ['email' => $target->email])
+                : __($status),
+        );
     }
 
     public function confirmDelete(int $id): void
@@ -333,6 +349,10 @@ new #[Title('Admin')] class extends Component {
                             @endif
 
                             @if ($me->canManage($user))
+                                <flux:menu.item icon="envelope" wire:click="sendPasswordReset({{ $user->id }})" data-test="send-reset-link-{{ $user->id }}">
+                                    {{ __('Send password reset link') }}
+                                </flux:menu.item>
+
                                 <flux:menu.separator />
 
                                 @if ($user->isSuspended())

@@ -3,6 +3,9 @@
 use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
+
+beforeEach(fn () => Storage::fake('local'));
 
 test('the seeder creates the fixed owner profile as user 1', function () {
     config(['educadin.owner' => ['name' => 'Dono Teste', 'email' => 'dono@example.com', 'password' => 'segredo-de-teste']]);
@@ -42,4 +45,20 @@ test('an existing user 1 with another email is never overwritten', function () {
 
     expect(User::find(1)->email)->toBe('outro@example.com')
         ->and(User::where('email', 'dono@example.com')->exists())->toBeFalse();
+});
+
+test('the demo profile comes with rich data to exercise every screen', function () {
+    config(['educadin.owner' => ['name' => 'Dono', 'email' => null, 'password' => null]]);
+
+    $this->seed(DatabaseSeeder::class);
+
+    $user = User::where('email', 'test@example.com')->first();
+
+    expect($user->isPremium())->toBeTrue()
+        ->and($user->accounts()->count())->toBeGreaterThanOrEqual(5)
+        ->and($user->cards()->count())->toBeGreaterThanOrEqual(5)
+        ->and($user->transactions()->count())->toBeGreaterThan(200)
+        ->and(\App\Models\InvoicePayment::where('user_id', $user->id)->count())->toBeGreaterThan(5)
+        ->and(\App\Models\RecurringTransaction::where('user_id', $user->id)->whereNotNull('cancelled_at')->count())->toBe(1)
+        ->and(\App\Models\Transaction::where('user_id', $user->id)->whereNotNull('installment_group')->count())->toBeGreaterThan(20);
 });

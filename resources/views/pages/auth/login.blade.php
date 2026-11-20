@@ -1,5 +1,5 @@
 <x-layouts::auth :title="__('Log in')">
-    <div class="flex flex-col gap-6">
+    <div class="flex flex-col gap-4 sm:gap-6">
         <x-auth-header :title="__('Log in to your account')" :description="__('Enter your email and password below to log in')" />
 
         <!-- Session Status -->
@@ -102,7 +102,7 @@
 
         <x-passkey-verify />
 
-        <form method="POST" action="{{ route('login.store') }}" @class(['flex flex-col gap-6', '[&_[data-flux-error]]:!hidden [&_[data-flux-control]]:!border-white/10' => old('from_known')])>
+        <form method="POST" action="{{ route('login.store') }}" @class(['flex flex-col gap-4 sm:gap-6', '[&_[data-flux-error]]:!hidden [&_[data-flux-control]]:!border-white/10' => old('from_known')])>
             @csrf
 
             <!-- Email Address -->

@@ -467,66 +467,74 @@ new #[Title('Accounts')] class extends Component {
             <div
                 wire:key="account-hero-{{ $account->id }}"
                 wire:transition
-                class="relative min-w-0 flex-1 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5"
+                class="relative grid min-w-0 flex-1 items-center gap-6 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5 lg:grid-cols-[19rem_1fr] lg:gap-8"
             >
                 @if ($this->locked)
                     <x-plan-lock :delete-id="$account->id" />
                 @endif
 
-                <div class="pointer-events-none absolute -right-16 -top-16 size-64 rounded-full blur-3xl {{ $account->color->glow() }}"></div>
+                {{-- Conta desenhada, no mesmo estilo do cartão --}}
+                <div class="relative aspect-[1.586] w-full max-w-[19rem] overflow-hidden rounded-2xl bg-gradient-to-br p-5 text-white shadow-xl {{ $account->color->gradient() }}">
+                    <div class="pointer-events-none absolute -right-10 -top-10 size-44 rounded-full bg-white/10"></div>
+                    <div class="pointer-events-none absolute -bottom-16 -left-8 size-48 rounded-full bg-black/10"></div>
 
-                <div class="relative flex flex-wrap items-center gap-6">
-                    <div class="flex size-20 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-3xl font-semibold text-white shadow-lg {{ $account->color->gradient() }}">
-                        {{ \Illuminate\Support\Str::upper(\Illuminate\Support\Str::substr($account->name, 0, 1)) }}
-                    </div>
-
-                    <div class="min-w-0 flex-1">
-                        <div class="flex items-start justify-between gap-3">
-                            <div class="min-w-0">
-                                <h2 class="truncate text-3xl font-semibold text-accent">{{ $account->name }}</h2>
-                                <flux:badge size="sm" color="zinc" class="mt-2">{{ $account->type->label() }}</flux:badge>
-                            </div>
-
-                            <flux:dropdown align="end">
-                                <flux:button variant="ghost" size="sm" icon="ellipsis-horizontal" inset="top bottom" />
-
-                                <flux:menu>
-                                    <flux:menu.item icon="pencil-square" wire:click="edit({{ $account->id }})">
-                                        {{ __('Edit') }}
-                                    </flux:menu.item>
-                                    <flux:menu.item icon="trash" variant="danger" wire:click="confirmDelete({{ $account->id }})">
-                                        {{ __('Delete') }}
-                                    </flux:menu.item>
-                                </flux:menu>
-                            </flux:dropdown>
+                    <div class="relative flex h-full flex-col justify-between">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="truncate text-xl font-semibold">{{ $account->name }}</span>
+                            <flux:icon.building-library class="size-7 shrink-0 opacity-90" />
                         </div>
 
-                        <div class="mt-3 text-sm text-zinc-400">{{ __('Current balance') }}</div>
-                        <div @class(['text-3xl font-semibold', 'text-white' => $balance >= 0, 'text-red-400' => $balance < 0])>
-                            {{ Money::format($balance) }}
-                        </div>
+                        <span class="text-sm font-medium uppercase tracking-widest opacity-90">{{ $account->type->label() }}</span>
                     </div>
                 </div>
 
-                <div class="relative mt-4 grid grid-cols-1 gap-4 border-t border-zinc-800 pt-4 sm:grid-cols-3">
-                    <div>
-                        <div class="text-sm text-zinc-400">{{ __('Income in the month') }}</div>
-                        <div class="mt-1 text-xl font-semibold text-emerald-400">{{ Money::format($totals['income']) }}</div>
-                    </div>
-                    <div>
-                        <div class="text-sm text-zinc-400">{{ __('Expenses in the month') }}</div>
-                        <div class="mt-1 text-xl font-semibold text-red-400">{{ Money::format($totals['expense']) }}</div>
-                    </div>
-                    <div>
-                        <div class="text-sm text-zinc-400">{{ __('Result of the month') }}</div>
-                        <div @class(['mt-1 text-xl font-semibold', 'text-emerald-400' => $net > 0, 'text-red-400' => $net < 0, 'text-white' => $net === 0])>
-                            {{ $net > 0 ? '+' : '' }}{{ Money::format($net) }}
+                {{-- Informações --}}
+                <div class="min-w-0">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <h2 class="break-words text-2xl font-semibold text-accent sm:text-3xl">{{ $account->name }}</h2>
+                            <flux:badge size="sm" color="zinc" class="mt-2">{{ $account->type->label() }}</flux:badge>
                         </div>
-                        @if ($percent !== null)
-                            <div class="text-xs text-zinc-500">
-                                {{ $percent > 0 ? '+' : '' }}{{ number_format($percent, 1, ',', '.') }}% {{ __('over the opening balance') }}
+
+                        <flux:dropdown align="end">
+                            <flux:button variant="ghost" size="sm" icon="ellipsis-horizontal" inset="top bottom" />
+
+                            <flux:menu>
+                                <flux:menu.item icon="pencil-square" wire:click="edit({{ $account->id }})">
+                                    {{ __('Edit') }}
+                                </flux:menu.item>
+                                <flux:menu.item icon="trash" variant="danger" wire:click="confirmDelete({{ $account->id }})">
+                                    {{ __('Delete') }}
+                                </flux:menu.item>
+                            </flux:menu>
+                        </flux:dropdown>
+                    </div>
+
+                    <div class="mt-4 text-sm text-zinc-400">{{ __('Current balance') }}</div>
+                    <div @class(['break-words text-2xl font-semibold sm:text-3xl', 'text-white' => $balance >= 0, 'text-red-400' => $balance < 0])>
+                        {{ Money::format($balance) }}
+                    </div>
+
+                    <div class="mt-4 grid grid-cols-1 gap-3 border-t border-zinc-800 pt-4 sm:grid-cols-3 sm:gap-4">
+                        <div class="min-w-0">
+                            <div class="text-sm text-zinc-400">{{ __('Income in the month') }}</div>
+                            <div class="mt-1 break-words text-lg font-semibold text-emerald-400 sm:text-xl">{{ Money::format($totals['income']) }}</div>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm text-zinc-400">{{ __('Expenses in the month') }}</div>
+                            <div class="mt-1 break-words text-lg font-semibold text-red-400 sm:text-xl">{{ Money::format($totals['expense']) }}</div>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm text-zinc-400">{{ __('Result of the month') }}</div>
+                            <div @class(['mt-1 break-words text-lg font-semibold sm:text-xl', 'text-emerald-400' => $net > 0, 'text-red-400' => $net < 0, 'text-white' => $net === 0])>
+                                {{ $net > 0 ? '+' : '' }}{{ Money::format($net) }}
                             </div>
-                        @endif
+                            @if ($percent !== null)
+                                <div class="text-xs text-zinc-500">
+                                    {{ $percent > 0 ? '+' : '' }}{{ number_format($percent, 1, ',', '.') }}% {{ __('over the opening balance') }}
+                                </div>
+                            @endif
+                        </div>
                     </div>
                 </div>
             </div>

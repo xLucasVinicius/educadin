@@ -495,7 +495,7 @@ new #[Title('Cards')] class extends Component {
             <div
                 wire:key="card-hero-{{ $card->id }}"
                 wire:transition
-                class="relative grid min-w-0 flex-1 items-center gap-8 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 lg:grid-cols-[19rem_1fr]"
+                class="relative grid min-w-0 flex-1 items-center gap-6 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4 sm:p-5 lg:grid-cols-[19rem_1fr] lg:gap-8"
             >
                 @if ($this->locked)
                     <x-plan-lock :delete-id="$card->id" />
@@ -523,7 +523,7 @@ new #[Title('Cards')] class extends Component {
                 <div class="min-w-0">
                     <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
-                            <h2 class="truncate text-3xl font-semibold text-accent">{{ $card->name }}</h2>
+                            <h2 class="break-words text-2xl font-semibold text-accent sm:text-3xl">{{ $card->name }}</h2>
                             <div class="mt-1 text-sm text-zinc-400">{{ __('Linked account') }}: {{ $card->account->name }}</div>
                         </div>
 
@@ -542,18 +542,18 @@ new #[Title('Cards')] class extends Component {
                     </div>
 
                     @if ($card->isCredit())
-                        <div class="mt-4 grid grid-cols-2 gap-4">
+                        <div class="mt-4 grid grid-cols-2 gap-3 sm:gap-4">
                             <div>
                                 <div class="flex items-center gap-2 text-sm text-zinc-400">
                                     {{ __('Invoice') }}
                                     <flux:badge size="sm" :color="$statusColor">{{ $statusLabel }}</flux:badge>
                                 </div>
-                                <div @class(['mt-1 text-2xl font-semibold', 'text-red-400' => $invoice['remaining'] > 0, 'text-emerald-400' => $invoice['remaining'] === 0])>{{ \App\Support\Money::format($invoice['remaining']) }}</div>
+                                <div @class(['mt-1 break-words text-lg font-semibold sm:text-2xl', 'text-red-400' => $invoice['remaining'] > 0, 'text-emerald-400' => $invoice['remaining'] === 0])>{{ \App\Support\Money::format($invoice['remaining']) }}</div>
                             </div>
 
                             <div>
                                 <div class="text-sm text-zinc-400">{{ __('Available limit') }}</div>
-                                <div class="mt-1 text-2xl font-semibold text-white">{{ \App\Support\Money::format(max(0, $card->credit_limit - $used)) }}</div>
+                                <div class="mt-1 break-words text-lg font-semibold text-white sm:text-2xl">{{ \App\Support\Money::format(max(0, $card->credit_limit - $used)) }}</div>
                             </div>
                         </div>
 
@@ -586,7 +586,7 @@ new #[Title('Cards')] class extends Component {
                     @else
                         <div class="mt-4">
                             <div class="text-sm text-zinc-400">{{ __('Spent in the month') }}</div>
-                            <div class="mt-1 text-2xl font-semibold text-red-400">{{ \App\Support\Money::format($spent) }}</div>
+                            <div class="mt-1 break-words text-lg font-semibold text-red-400 sm:text-2xl">{{ \App\Support\Money::format($spent) }}</div>
                         </div>
                     @endif
                 </div>
